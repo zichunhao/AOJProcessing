@@ -43,8 +43,20 @@ cp "${WORK}/${CHUNK}" ./input_chunk.txt
 echo "=== input files ($(wc -l < input_chunk.txt)) ==="; cat input_chunk.txt
 
 # ---- Stage 1: PFNano ----
+# Tolerate the rare DeepBoostedJet/ParticleNet segfault on a pathological jet:
+# cmsRun writes the NanoAOD incrementally, so on a crash we still salvage every
+# event written before it and let H5_maker process those (ROOT recovers the
+# unclosed file). Only fail the job if NO (partial) output was produced.
 echo "===== Stage 1: cmsRun ${CONFIG}  ($(date)) ====="
+set +e
 cmsRun "${CONFIG}" inputFiles_load=input_chunk.txt nThreads="${NTHREADS}"
+cmsrc=$?
+set -e
+if [ "${cmsrc}" -ne 0 ]; then
+  echo "WARNING: cmsRun exited ${cmsrc} (known rare ParticleNet/DeepBoostedJet segfault)."
+  if [ ! -s "${NANO}" ]; then echo "FATAL: no partial ${NANO} produced -- failing job."; exit "${cmsrc}"; fi
+  echo "Salvaging the events written before the crash from partial ${NANO} ($(ls -l "${NANO}" | awk '{print $5}') bytes)."
+fi
 
 # ---- Stage 2: HDF5 ----
 echo "===== Stage 2: H5_maker  ($(date)) ====="
