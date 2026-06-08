@@ -1,0 +1,25 @@
+# AOJ Condor submit template.  gen_submit.sh fills the @PLACEHOLDERS@ from
+# config.sh and writes submit.sub.  One job per line of joblist.txt.
+universe                = vanilla
+executable              = job.sh
+arguments               = $(dataset) $(chunkbase) $(outname)
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files    = $(chunkpath)
+
+use_x509userproxy       = true
+x509userproxy           = @PROXY@
+
++SingularityImage       = "@EL7_IMAGE@"
+environment             = "STORE_XRD=@STORE_XRD@ SCRAM_ARCH=@SCRAM_ARCH@ NTHREADS=@NTHREADS@ CMSSW_VERSION=@CMSSW_VERSION@ CMSSW_TARBALL=@CMSSW_TARBALL@"
+
+request_cpus            = @NTHREADS@
+request_memory          = @REQUEST_MEMORY@
+request_disk            = @REQUEST_DISK@
+
+output                  = logs/$(outname).out
+error                   = logs/$(outname).err
+log                     = logs/$(outname).log
+
+queue dataset,chunkpath,chunkbase,outname from joblist.txt

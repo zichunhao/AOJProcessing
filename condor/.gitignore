@@ -1,0 +1,10 @@
+# generated artifacts (not source)
+chunks/
+logs/
+submit.sub
+joblist.txt
+*_lists.txt
+validation.tsv
+*.log
+*.err
+*.tar.gz

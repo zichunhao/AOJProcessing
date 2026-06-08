@@ -3,3 +3,7 @@
 *.root
 *.swp
 *.un~
+
+# condor batch working dirs (local-tmux step1.sh leftovers + chunked PFNano)
+run_*/
+split_*/
