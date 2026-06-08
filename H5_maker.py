@@ -295,6 +295,19 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
         eventBranch = inTree.GetBranch('event')
         treeEntries = eventBranch.GetEntries()
 
+        # Some HLT/Flag branches are absent from this NanoAOD schema (the HLT
+        # menu varies by data era); NanoAODTools.readBranch raises on a missing
+        # branch. Restrict to branches actually present -- a trigger/filter that
+        # does not exist cannot have fired, so this is selection-neutral.
+        present = set(b.GetName() for b in TTree.GetListOfBranches())
+        avail_triggers = [t for t in triggers if t in present]
+        avail_filters  = [f for f in filters  if f in present]
+        _missing = [t for t in triggers if t not in present]
+        if _missing:
+            print("NOTE: %d/%d trigger branches not in this NanoAOD, skipping (e.g. %s)" % (len(_missing), len(triggers), _missing[0]))
+        if len(avail_triggers) == 0:
+            print("WARNING: no trigger branches present in this file!")
+
 
 # -------- Begin Loop over tree-------------------------------------
 
@@ -311,12 +324,12 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
             event = Event(inTree, entry)
 
             passTrigger = False
-            for trig in triggers: passTrigger = passTrigger or inTree.readBranch(trig)
+            for trig in avail_triggers: passTrigger = passTrigger or inTree.readBranch(trig)
             if(not passTrigger): continue
 
             
             passFilter = True
-            for fil in filters: passFilter = passFilter and inTree.readBranch(fil)
+            for fil in avail_filters: passFilter = passFilter and inTree.readBranch(fil)
             if(not passFilter): continue
             
 
