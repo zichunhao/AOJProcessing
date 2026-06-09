@@ -37,7 +37,8 @@ FILES_PER_JOB="${FILES_PER_JOB:-3}"          # MINIAOD input files per Condor jo
                                              # (~76 min/file on a slow glidein, ~6 min on a fast one)
 NTHREADS="${NTHREADS:-1}"                    # cmsRun threads  (== request_cpus)
 REQUEST_MEMORY="${REQUEST_MEMORY:-4000}"     # MB
-REQUEST_DISK="${REQUEST_DISK:-8000000}"      # KB (~7.6 GB; holds transient nano.root)
+REQUEST_DISK="${REQUEST_DISK:-20000000}"     # KB (~19 GB; holds staged MINIAOD + nano)
+                                             # scales with FILES_PER_JOB x MINIAOD size
 SALVAGE_PARALLEL="${SALVAGE_PARALLEL:-3}"    # local H5_maker jobs at once during salvage
 
 case "$SITE" in

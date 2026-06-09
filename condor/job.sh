@@ -7,9 +7,11 @@
 #     STORE_XRD CMSSW_VERSION CMSSW_TARBALL SCRAM_ARCH NTHREADS
 # Args:  <dataset>  <chunkfile-basename>  <output.h5>
 #
-# Flow:  fetch CMSSW tarball (xrootd) -> cmsenv -> cmsRun PFNano
-#        -> H5_maker -> xrdcp the small .h5 to <STORE>/h5/.  The 10-15 GB
-#        intermediate NanoAOD never leaves the worker scratch dir.
+# Flow:  fetch CMSSW tarball (xrootd) -> cmsenv -> STAGE inputs to scratch
+#        -> cmsRun PFNano -> H5_maker -> xrdcp the small .h5 to <STORE>/h5/.
+#        Inputs are copied locally first because streaming MINIAOD from eospublic
+#        over the WAN is latency-bound off-site (~10x slower); the big NanoAOD and
+#        the staged inputs never leave the worker scratch dir.
 # ============================================================================
 set -e
 echo "===== AOJ job start $(date) on $(hostname) ====="
@@ -39,8 +41,31 @@ cd "${WORK}/${CMSSW_VERSION}/src"
 scram b ProjectRename || echo "WARN: ProjectRename returned non-zero (continuing)"
 eval "$(scram runtime -sh)"
 cd AOJProcessing
-cp "${WORK}/${CHUNK}" ./input_chunk.txt
-echo "=== input files ($(wc -l < input_chunk.txt)) ==="; cat input_chunk.txt
+cp "${WORK}/${CHUNK}" ./remote_chunk.txt
+echo "=== input files ($(wc -l < remote_chunk.txt)) ==="; cat remote_chunk.txt
+
+# ---- Stage inputs to local scratch ----
+# Streaming MINIAOD from eospublic over the WAN is latency-bound (PFNano touches
+# many branches/event) and ran ~10x slower off-site. Copy each input locally
+# first (one bulk sequential transfer), then point cmsRun at the local files so
+# processing becomes CPU-bound, like on-site.
+echo "===== Staging inputs to scratch  ($(date)) ====="
+mkdir -p "${WORK}/inputs"
+: > local_chunk.txt
+i=0
+while read -r f; do
+  [ -z "$f" ] && continue
+  loc="${WORK}/inputs/in_${i}.root"
+  echo "  staging $f"
+  n=0
+  until xrdcp -f -s "$f" "$loc"; do
+    n=$((n+1)); [ "$n" -ge 3 ] && { echo "FATAL: failed to stage $f after $n tries"; exit 1; }
+    echo "  retry $n ..."; sleep 15
+  done
+  echo "file:${loc}" >> local_chunk.txt
+  i=$((i+1))
+done < remote_chunk.txt
+echo "staged $(wc -l < local_chunk.txt) file(s), $(du -sh "${WORK}/inputs" 2>/dev/null | cut -f1) total"
 
 # ---- Stage 1: PFNano ----
 # Tolerate the rare DeepBoostedJet/ParticleNet segfault on a pathological jet:
@@ -49,7 +74,7 @@ echo "=== input files ($(wc -l < input_chunk.txt)) ==="; cat input_chunk.txt
 # unclosed file). Only fail the job if NO (partial) output was produced.
 echo "===== Stage 1: cmsRun ${CONFIG}  ($(date)) ====="
 set +e
-cmsRun "${CONFIG}" inputFiles_load=input_chunk.txt nThreads="${NTHREADS}"
+cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}"
 cmsrc=$?
 set -e
 if [ "${cmsrc}" -ne 0 ]; then
@@ -70,5 +95,5 @@ fi
 # ---- push the small output, drop the big intermediate ----
 echo "===== Push ${OUTNAME} -> ${STORE_XRD}/h5/  ($(date)) ====="
 xrdcp -f "${OUTNAME}" "${STORE_XRD}/h5/${OUTNAME}"
-rm -f "${NANO}" "${OUTNAME}"
+rm -f "${NANO}" "${OUTNAME}"; rm -rf "${WORK}/inputs"
 echo "===== AOJ job done $(date) ====="
