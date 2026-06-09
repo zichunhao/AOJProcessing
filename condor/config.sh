@@ -7,7 +7,16 @@
 # Everything else (job.sh, submit file, helpers) reads from here.
 # ============================================================================
 
-SITE="${AOJ_SITE:-uaf}"            # where you SUBMIT FROM: uaf | lpc
+# Submit site: explicit AOJ_SITE wins, otherwise auto-detect from the hostname.
+if [ -n "${AOJ_SITE:-}" ]; then
+  SITE="$AOJ_SITE"
+else
+  case "$(hostname -f 2>/dev/null || hostname)" in
+    cmslpc*|*.fnal.gov) SITE=lpc ;;
+    uaf*|*.t2.ucsd.edu) SITE=uaf ;;
+    *)                  SITE=uaf ;;   # default
+  esac
+fi
 
 # ----------------------------------------------------------------------------
 # Canonical AOJ store -- ALWAYS UAF (UCSD T2), matching the HH4b convention
