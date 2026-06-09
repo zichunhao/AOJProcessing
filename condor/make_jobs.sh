@@ -29,6 +29,19 @@ fi
 
 : > "$HERE/joblist.txt"
 njobs=0; skipped=0
+
+# Outputs already on the store -> idempotent skip. Works whether the store is
+# locally mounted (UAF ceph) or remote (LPC submitting to the UCSD store): list
+# the h5 dir once via the mount if present, else via xrootd.
+existing="$(mktemp)"
+if [ -n "${STORE_LOCAL:-}" ] && [ -d "${STORE_LOCAL}/h5" ]; then
+  ls "${STORE_LOCAL}/h5" 2>/dev/null > "$existing" || true
+else
+  # parse root://HOST//ABSPATH  ->  server=root://HOST/  dir=/ABSPATH/h5
+  _t="${STORE_XRD#root://}"; _server="root://${_t%%//*}/"; _dir="/${_t#*//}/h5"
+  xrdfs "$_server" ls "$_dir" 2>/dev/null | sed 's:.*/::' > "$existing" || true
+fi
+
 while read -r dataset filelist label; do
   [ -z "${dataset:-}" ] && continue
   flist="$filelist"
@@ -40,7 +53,7 @@ while read -r dataset filelist label; do
   for c in chunks/${label}_sub*; do
     sub="$(basename "$c")"          # e.g. 2016H_03_sub000
     out="out_${sub}.h5"
-    if [ -e "${STORE_LOCAL}/h5/${out}" ]; then
+    if grep -qxF "$out" "$existing"; then
       skipped=$((skipped+1)); continue
     fi
     # columns: dataset  chunkpath(rel to condor/)  chunkbase  outname
@@ -49,5 +62,6 @@ while read -r dataset filelist label; do
   done
 done < "$REGEN"
 
+rm -f "$existing"
 bash "$HERE/gen_submit.sh"
 echo "make_jobs: $njobs job(s) queued, $skipped already on storage (FILES_PER_JOB=$FILES_PER_JOB)."
