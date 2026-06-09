@@ -89,12 +89,19 @@ scram b -j8
 cd AOJProcessing/condor
 ```
 
-Then:
+Then **`exit` the container and run `run.sh` from the bare LPC host** — only the
+build (`scram b`) needs el7; `condor_submit` lives on the host, and the
+validate/salvage/merge steps enter the el7 container themselves (jobs run in el7
+on the workers via `+SingularityImage`):
 ```bash
+exit                                 # leave cmssw-el7 (condor_submit is host-side)
+cd ~/nobackup/CMSSW_10_6_30/src/AOJProcessing/condor
 export AOJ_SITE=lpc
 voms-proxy-init -rfc -voms cms
 ./run.sh pack && ./run.sh smoke      # then: ./run.sh scratch
 ```
+(If `pack` reports `xrdcp: command not found` on the host, first
+`source /cvmfs/cms.cern.ch/cmsset_default.sh`.)
 
 - **Output / `LPCUSER` (note: usernames differ across sites):** output defaults
   to the UCSD ceph even from LPC (one collection point). That path hardcodes the
