@@ -41,15 +41,16 @@ case "$SITE" in
     ;;
   lpc)
     # ----------------------- Fermilab LPC ------------------------
-    # The UAF store is NOT locally mounted here -> leave STORE_LOCAL empty so
-    # pack/merge fall back to xrootd. (validate/salvage are UAF-only: they act on
-    # the local run_*/ partial outputs, which exist only on UAF.)
-    STORE_LOCAL="${AOJ_STORE_LOCAL:-}"
-    CONTAINER_BINDS="/eos,/uscms,/uscmst1"
+    LPCUSER="${LPCUSER:-$USER}"                # <-- your Fermilab username; only
+                                              #     used if you send output to EOS
+    CONTAINER_BINDS="/eos,/uscms,/uscms_data" # binds for local cmssw-el7 steps
     PROXY="${X509_USER_PROXY:-/tmp/x509up_u$(id -u)}"
-    # If LPC condor needs it, also add to submit.templ.sub:
-    #   +DesiredOS = "EL7"      (usually unnecessary with +SingularityImage)
-    #   +ProjectName = "..."    if your accounting group requires it
+    STORE_LOCAL="${AOJ_STORE_LOCAL:-}"        # UCSD store isn't fuse-mounted at LPC
+    # Output defaults to the UCSD ceph (STORE_XRD above) even from LPC. To keep
+    # output on FNAL EOS instead, uncomment these two lines:
+    #STORE_XRD="root://cmseos.fnal.gov//store/user/${LPCUSER}/parcel/AOJ"
+    #STORE_LOCAL="/eos/uscms/store/user/${LPCUSER}/parcel/AOJ"
+    # If LPC condor complains about the OS, add +DesiredOS = "EL7" to submit.templ.sub.
     ;;
   *)
     echo "config.sh: unknown SITE='$SITE' (expected uaf|lpc)" >&2

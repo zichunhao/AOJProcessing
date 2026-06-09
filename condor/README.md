@@ -72,11 +72,40 @@ printf "2016G file_lists/2016G.txt 2016G\n2016H file_lists/2016H.txt 2016H\n" > 
 MC is auto-detected from the label (`QCD*`/`*_mc*` → MC config, no JSON cert).
 
 ## Porting to Fermilab LPC
-1. Build CMSSW_10_6_30 + PFNano on LPC (same as UAF).
-2. `export AOJ_SITE=lpc` and set `LPCUSER`. Output still defaults to UCSD ceph
-   ("output to UAF"); set `AOJ_STORE_XRD`/`AOJ_STORE_LOCAL` to use LPC EOS instead.
-3. `voms-proxy-init -voms cms` (config picks up `$X509_USER_PROXY`).
-4. `./run.sh scratch` (the validate/salvage steps are UAF-only — they act on the
-   local `run_*/` partials, which exist only on UAF).
-If LPC condor complains about the OS, add `+DesiredOS = "EL7"` in
-`submit.templ.sub` (usually unnecessary with `+SingularityImage`).
+
+CMSSW_10_6_30 is slc7 but LPC nodes are el8/el9, so build/run inside the EL7
+container. `~/nobackup` is a symlink to `/uscms_data`, which is NOT mounted in
+the container by default — bind it on entry, or the symlink dangles:
+
+```bash
+cmssw-el7 -B /uscms_data             # enter el7 with nobackup bound
+cd ~/nobackup                        # build here (the /uscms/home quota is tiny)
+cmsrel CMSSW_10_6_30
+cd CMSSW_10_6_30/src && cmsenv
+git clone https://github.com/cms-opendata-analyses/PFNanoProducerTool.git PhysicsTools/PFNano
+git clone https://github.com/cms-nanoAOD/nanoAOD-tools.git PhysicsTools/NanoAODTools
+git clone git@github.com:zichunhao/AOJProcessing.git
+scram b -j8
+cd AOJProcessing/condor
+```
+
+Then:
+```bash
+export AOJ_SITE=lpc
+voms-proxy-init -rfc -voms cms
+./run.sh pack && ./run.sh smoke      # then: ./run.sh scratch
+```
+
+- **Output / `LPCUSER` (note: usernames differ across sites):** output defaults
+  to the UCSD ceph even from LPC (one collection point). That path hardcodes the
+  UCSD name (`zichun`) and works from LPC because writes are authorized by your
+  grid proxy, not your login — so you do **not** need `LPCUSER` for the default.
+  `LPCUSER` lives in `config.sh`'s `lpc)` block (defaults to your login `$USER`)
+  and is only used if you redirect output to FNAL EOS — uncomment the
+  `STORE_XRD`/`STORE_LOCAL` lines there. Verify your EOS name first
+  (`eos root://cmseos.fnal.gov ls /store/user/<name>`): a CERN login may map to a
+  suffixed EOS area (e.g. `zhao` vs `zhao1`).
+- `validate`/`salvage` are UAF-only (they act on the local `run_*/` partials).
+- `merge` runs where the store is mounted (UAF for ceph; LPC for EOS).
+- If LPC condor complains about the OS, add `+DesiredOS = "EL7"` to
+  `submit.templ.sub` (usually unnecessary with `+SingularityImage`).
