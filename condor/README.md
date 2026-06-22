@@ -50,14 +50,29 @@ condor_q                     # watch
 
 Individual steps are also available: `./run.sh pack|validate|salvage|jobs|submit|merge`.
 
+## Retrying failed jobs
+Failed jobs are **held** (kept in the queue), not dropped — `submit.sub` sets
+`on_exit_hold = (ExitBySignal == true) || (ExitCode != 0)`, and `job.sh` runs
+under `set -e`. So after a batch:
+```bash
+condor_q <cluster>            # HELD = failed; running/idle = still going
+condor_release <cluster>     # re-run just the failed ones -- no resubmit / store-listing
+```
+Repeat until nothing is held; inspect a `logs/out_<chunk>.h5.err` to see why before
+releasing. (Evictions are *not* held — Condor auto-reschedules those.)
+
+To (re)submit only specific chunks **without** listing the store (handy off-site,
+where the redirector directory `ls` is slow), put their labels (e.g. `2016G_sub014`,
+one per line) in a file and run `AOJ_MISSING=missing.txt ./run.sh jobs`.
+
 ## Knobs (`config.sh`, or env overrides)
 | var | default | meaning |
 |---|---|---|
 | `AOJ_SITE` | `uaf` | submit site: `uaf` \| `lpc` |
-| `FILES_PER_JOB` | `10` | MINIAOD files per Condor job |
+| `FILES_PER_JOB` | `3` | MINIAOD files per Condor job |
 | `NTHREADS` | `1` | cmsRun threads (= `request_cpus`) |
 | `REQUEST_MEMORY` | `4000` | MB |
-| `REQUEST_DISK` | `8000000` | KB (holds the transient NanoAOD) |
+| `REQUEST_DISK` | `20000000` | KB (~19 GB; holds the staged MINIAOD + NanoAOD) |
 | `AOJ_STORE_XRD` | UCSD ceph | output store (xrootd) |
 
 ## Regenerate from scratch / other samples

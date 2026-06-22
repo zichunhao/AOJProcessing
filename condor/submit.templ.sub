@@ -18,6 +18,14 @@ request_cpus            = @NTHREADS@
 request_memory          = @REQUEST_MEMORY@
 request_disk            = @REQUEST_DISK@
 
+# Hold (keep in the queue) any job that FAILS, instead of letting it leave
+# silently. job.sh runs under `set -e`, so any failed step -> non-zero exit (or a
+# signal) -> the job goes HELD; a success exits 0 and leaves with its .h5 on the
+# store. Retry the failures with:   condor_release <cluster>
+# (evictions don't trigger this -- Condor auto-reschedules those.)
+on_exit_hold            = (ExitBySignal == true) || (ExitCode != 0)
+on_exit_hold_reason     = "job.sh failed (see logs/$(outname).err); condor_release to retry"
+
 output                  = logs/$(outname).out
 error                   = logs/$(outname).err
 log                     = logs/$(outname).log
