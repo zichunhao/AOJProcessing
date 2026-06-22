@@ -30,16 +30,27 @@ fi
 : > "$HERE/joblist.txt"
 njobs=0; skipped=0
 
-# Outputs already on the store -> idempotent skip. Works whether the store is
-# locally mounted (UAF ceph) or remote (LPC submitting to the UCSD store): list
-# the h5 dir once via the mount if present, else via xrootd.
+# Decide which chunks to (re)submit. Two modes:
+#  - AOJ_MISSING=<file>: submit ONLY the chunk labels it lists (one per line, e.g.
+#    "2016G_sub014"); the store is NOT listed. Use this from LPC, where listing
+#    the UCSD store through the redirector (a directory ls) is slow/hangs.
+#  - otherwise (idempotent skip): list the store's h5/ once -- local mount if
+#    present, else xrootd with a timeout -- and skip outputs already there.
 existing="$(mktemp)"
-if [ -n "${STORE_LOCAL:-}" ] && [ -d "${STORE_LOCAL}/h5" ]; then
+if [ -n "${AOJ_MISSING:-}" ] && [ -f "$AOJ_MISSING" ]; then
+  echo "make_jobs: AOJ_MISSING set -> submitting only the $(grep -c . "$AOJ_MISSING") listed chunk(s); skipping store listing."
+elif [ -n "${STORE_LOCAL:-}" ] && [ -d "${STORE_LOCAL}/h5" ]; then
   ls "${STORE_LOCAL}/h5" 2>/dev/null > "$existing" || true
 else
   # parse root://HOST//ABSPATH  ->  server=root://HOST/  dir=/ABSPATH/h5
   _t="${STORE_XRD#root://}"; _server="root://${_t%%//*}/"; _dir="/${_t#*//}/h5"
-  xrdfs "$_server" ls "$_dir" 2>/dev/null | sed 's:.*/::' > "$existing" || true
+  if timeout 180 xrdfs "$_server" ls "$_dir" > "${existing}.raw" 2>/dev/null; then
+    sed 's:.*/::' "${existing}.raw" > "$existing"; rm -f "${existing}.raw"
+  else
+    echo "ERROR: listing the store via xrootd timed out/failed (common from off-site)." >&2
+    echo "       Re-run with an explicit missing list:  AOJ_MISSING=missing.txt ./run.sh jobs" >&2
+    rm -f "$existing" "${existing}.raw"; exit 1
+  fi
 fi
 
 while read -r dataset filelist label; do
@@ -51,9 +62,11 @@ while read -r dataset filelist label; do
   rm -f chunks/${label}_sub*
   split -l "$FILES_PER_JOB" -d -a 3 "$flist" "chunks/${label}_sub"
   for c in chunks/${label}_sub*; do
-    sub="$(basename "$c")"          # e.g. 2016H_03_sub000
+    sub="$(basename "$c")"          # e.g. 2016G_sub014
     out="out_${sub}.h5"
-    if grep -qxF "$out" "$existing"; then
+    if [ -n "${AOJ_MISSING:-}" ] && [ -f "$AOJ_MISSING" ]; then
+      grep -qxF "$sub" "$AOJ_MISSING" || continue          # queue only listed chunks
+    elif grep -qxF "$out" "$existing"; then
       skipped=$((skipped+1)); continue
     fi
     # columns: dataset  chunkpath(rel to condor/)  chunkbase  outname
