@@ -21,6 +21,8 @@ DATASET="$1"; CHUNK="$2"; OUTNAME="$3"
 : "${CMSSW_TARBALL:=${CMSSW_VERSION}.tar.gz}"
 : "${SCRAM_ARCH:=slc7_amd64_gcc700}"
 export SCRAM_ARCH
+# Resilience to transient eospublic (CERN Open Data) connection errors at staging.
+export XRD_CONNECTIONRETRY=8 XRD_REQUESTTIMEOUT=600 XRD_STREAMTIMEOUT=120
 WORK="$(pwd)"
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
@@ -59,8 +61,8 @@ while read -r f; do
   echo "  staging $f"
   n=0
   until xrdcp -f -s "$f" "$loc"; do
-    n=$((n+1)); [ "$n" -ge 3 ] && { echo "FATAL: failed to stage $f after $n tries"; exit 1; }
-    echo "  retry $n ..."; sleep 15
+    n=$((n+1)); [ "$n" -ge 6 ] && { echo "FATAL: failed to stage $f after $n tries (eospublic unreachable?)"; exit 1; }
+    echo "  stage retry $n (eospublic hiccup); waiting $((n*30))s ..."; sleep $((n*30))
   done
   echo "file:${loc}" >> local_chunk.txt
   i=$((i+1))
