@@ -6,21 +6,20 @@ features and split train/val/test. **~176.6 M jets**, predominantly **QCD**
 (real data: `pt > 300 GeV`, `|eta| < 2.5`, tight jet ID, certified lumisections).
 
 ## Location
-Produced on the **UCSD ceph**, under `/ceph/cms/store/user/zichun/parcel/AOJ/`:
+**On the Nautilus PVC `rinovol-central`** (ns `cms-ml`, mounted at `/rinovol-central`)
+— this is what you train on:
 
 | path | what |
 |---|---|
-| `skimmed/train/train_NNNN.h5` | 77 shards, 153,531,392 jets (86.96%) |
-| `skimmed/val/val_NNNN.h5`     | 4 shards, 7,680,203 jets (4.35%) |
-| `skimmed/test/test_NNNN.h5`   | 8 shards, 15,346,822 jets (8.69%) |
-| `merged.h5` | full un-sharded, un-skimmed source (raw `Px,Py,Pz,E` constituents) |
-| `h5/out_*.h5` | the 1273 per-chunk producer outputs (raw) |
+| `/rinovol-central/AOJ/train/train_NNNN.h5` | 77 shards, 153,531,392 jets (86.96%) |
+| `/rinovol-central/AOJ/val/val_NNNN.h5`     | 4 shards, 7,680,203 jets (4.35%) |
+| `/rinovol-central/AOJ/test/test_NNNN.h5`   | 8 shards, 15,346,822 jets (8.69%) |
+| `/rinovol-central/AOJProcessing` | this code (producers + this doc) |
 
 Each shard holds **≤ 2,000,000 jets** (last shard per split is smaller).
-**For Nautilus training the `skimmed/` tree must be on the `rinovol-central` PVC**
-(60 TB, ns `cms-ml`, mounted at `/rinovol-central`); the code lives at
-`/rinovol-central/AOJProcessing`. Copy the data with the usual ceph→PVC pattern
-(interactive pod + `kubectl cp`, or an xrootd/rsync job).
+Mirror/source on the **UCSD ceph** (`/ceph/cms/store/user/zichun/parcel/AOJ/`):
+`skimmed/` (identical shards), `merged.h5` (un-sharded source), `h5/out_*.h5`
+(1273 raw per-chunk producer outputs).
 
 ## Shard schema
 One row = one jet. Column names are also stored in `dset.attrs["columns"]`.
@@ -54,7 +53,7 @@ at load time**.
 ## Loading (h5py)
 ```python
 import h5py, glob, numpy as np
-shards = sorted(glob.glob("/rinovol-central/.../skimmed/train/train_*.h5"))
+shards = sorted(glob.glob("/rinovol-central/AOJ/train/train_*.h5"))
 with h5py.File(shards[0]) as f:
     cols = f["PFCands"].attrs["columns"].split(",")   # feature names, in order
     pf   = f["PFCands"][:]          # (n, 150, 16)
