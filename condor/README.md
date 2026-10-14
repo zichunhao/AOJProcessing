@@ -93,7 +93,8 @@ printf "2016G file_lists/2016G.txt 2016G\n2016H file_lists/2016H.txt 2016H\n" > 
 MC is auto-detected from the label (`QCD*`/`TT*`/`ST_*`/`WJets*`/`*_mc*`/`MC_*` → MC config, no JSON
 cert; `TT*` also adds the per-jet `top_match` label). For MC, put one line per sample in `regen_lists.txt`, e.g.
 `QCD_Pt300 file_lists/QCD_Pt300.txt QCD_Pt300`, and merge each sample separately:
-`./run.sh merge QCD_Pt300` → `merged_QCD_Pt300.h5`. Never merge different MC samples together;
+`./run.sh merge QCD_Pt300` → `merged_QCD_Pt300.h5` (for ttbar, `python H5_select.py merged_TTToHadronic.h5
+merged_TTToHadronic_topmatched.h5 --top_match 2` then keeps the gen-matched tops). Never merge different MC samples together;
 each one needs its own `xsec × lumi / sumGenWeight` normalization. Merge a sample only after
 all its jobs have finished. `merge.sh` will not overwrite an existing output (`H5_merge.py`
 truncates it first) unless `AOJ_MERGE_FORCE=1`. `make_jobs.sh` skips an empty file list.

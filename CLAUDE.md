@@ -101,6 +101,8 @@ Flags: `-i/--input`, `-o/--output` (default `test.h5`), `--sample_type {data,MC}
 ### Merge
 ```bash
 python H5_merge.py merged.h5 file1.h5 file2.h5 ...   # argv[1]=output, argv[2:]=inputs
+# ttbar made with --top_label: keep the fully merged tops (== H5_maker --gen_match 6; --top_match 1 = W)
+python H5_select.py merged_TTToHadronic.h5 merged_TTToHadronic_topmatched.h5 --top_match 2
 ```
 
 ## Architecture
@@ -138,6 +140,9 @@ Process `cms.Process('NANO', Run2_2016, run2_nanoAOD_106Xv2)`. Apply stock `nano
 
 ### `H5_merge.py`
 Copies the first input as the base, including dataset and root attributes, then concatenates the rest dataset by dataset. It skips any input whose key set differs from the base, so MC (which has `gen_info`) never merges into data. The root attributes `nEventsProcessed` and `sumGenWeight` are **summed**. Datasets named `*_eff` or with first-dim 1 get a row-count-weighted average instead of concatenation. `H5_maker.py` writes no such datasets, but beware: a per-job file holding exactly one jet would trip this rule.
+
+### `H5_select.py`
+Copies a jet file keeping only the rows whose `gen_info` `top_match` equals `--top_match` (2 = b, q, q' of one hadronic top within ΔR < 0.8, 1 = W). Applied to a `--top_label` file it gives exactly the jets `--gen_match 6` writes (checked on 20k TTToSemiLeptonic events), so ttbar samples are produced once with all jets and filtered afterwards. It filters every per-jet dataset in chunks of 20k rows, copies dataset and root attributes (the normalization attributes still describe the whole processed sample), adds a `jet_selection` root attribute, and refuses to overwrite an output unless `--force`. Python 2 (CMSSW) and 3.
 
 ### `file_lists/`
 Input ROOT-file lists (one xrootd path per line):
