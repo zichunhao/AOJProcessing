@@ -48,6 +48,7 @@ case "$SITE" in
     STORE_LOCAL="${AOJ_STORE_LOCAL:-/ceph/cms/store/user/zichun/parcel/AOJ}"
     CONTAINER_BINDS="/ceph"                  # extra bind for local cmssw-el7 steps
     PROXY="${X509_USER_PROXY:-$HOME/.x509/x509up_u$(id -u)}"
+    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-}"         # empty = submit from condor/ in place
     ;;
   lpc)
     # ----------------------- Fermilab LPC ------------------------
@@ -55,6 +56,10 @@ case "$SITE" in
                                               #     used if you send output to EOS
     CONTAINER_BINDS="/eos,/uscms,/uscms_data" # binds for local cmssw-el7 steps
     PROXY="${X509_USER_PROXY:-/tmp/x509up_u$(id -u)}"
+    # LPC schedds can't see /eos: a cluster submitted from an /eos dir is HELD at
+    # once ("Cannot access initial working directory"). submit.sh submits from
+    # here instead, so the job logs land in $SUBMIT_DIR/logs.
+    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor}"
     STORE_LOCAL="${AOJ_STORE_LOCAL:-}"        # UCSD store isn't fuse-mounted at LPC
     # Output defaults to the UCSD ceph (STORE_XRD above) even from LPC. To keep
     # output on FNAL EOS instead, uncomment these two lines:
@@ -72,4 +77,4 @@ CMSSW_TARBALL="${CMSSW_VERSION}.tar.gz"
 
 export SITE CMSSW_VERSION SCRAM_ARCH EL7_IMAGE FILES_PER_JOB NTHREADS \
        REQUEST_MEMORY REQUEST_DISK SALVAGE_PARALLEL \
-       STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL
+       STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL SUBMIT_DIR

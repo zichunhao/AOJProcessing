@@ -35,7 +35,7 @@ cd CMSSW_10_6_30/src/AOJProcessing/condor
 ./run.sh smoke               # 1-file end-to-end test; check h5/out_smoke_sub000.h5
 ./run.sh salvage-and-submit  # pack + validate existing + salvage good + submit the rest
 condor_q                     # watch
-./run.sh merge               # when all jobs done -> merged.h5
+./run.sh merge               # when all jobs done -> merged.h5 (data; `merge <label>` for one MC sample)
 ```
 
 `salvage-and-submit` does, in order:
@@ -47,6 +47,8 @@ condor_q                     # watch
    reusing their PFNano compute → `store/h5/`.
 4. **submit** Condor jobs that redo PFNano+H5 only for the incomplete/missing
    chunks (split `FILES_PER_JOB` at a time).
+
+On LPC the jobs are submitted from `SUBMIT_DIR` (default `~/nobackup/aoj_condor`; see `config.sh` and `submit.sh`), because LPC schedds cannot read `/eos` and hold every job submitted from there. Job logs then live in `$SUBMIT_DIR/logs`.
 
 Individual steps are also available: `./run.sh pack|validate|salvage|jobs|submit|merge`.
 
@@ -84,7 +86,13 @@ printf "2016G file_lists/2016G.txt 2016G\n2016H file_lists/2016H.txt 2016H\n" > 
 ./run.sh jobs && ./run.sh submit
 # or simply:  ./run.sh scratch
 ```
-MC is auto-detected from the label (`QCD*`/`*_mc*` → MC config, no JSON cert).
+MC is auto-detected from the label (`QCD*`/`TT*`/`*_mc*` → MC config, no JSON cert; `TT*` also
+adds the per-jet `top_match` label). For MC, put one line per sample in `regen_lists.txt`, e.g.
+`QCD_Pt300 file_lists/QCD_Pt300.txt QCD_Pt300`, and merge each sample separately:
+`./run.sh merge QCD_Pt300` → `merged_QCD_Pt300.h5`. Never merge different MC samples together;
+each one needs its own `xsec × lumi / sumGenWeight` normalization. Merge a sample only after
+all its jobs have finished. `merge.sh` will not overwrite an existing output (`H5_merge.py`
+truncates it first) unless `AOJ_MERGE_FORCE=1`. `make_jobs.sh` skips an empty file list.
 
 ## Porting to Fermilab LPC
 

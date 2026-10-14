@@ -27,11 +27,14 @@ WORK="$(pwd)"
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
 
-# data vs MC selection (QCD_* or *_mc* => MC)
+# data vs MC selection (QCD*, TT*, *_mc*, MC_* => MC). ttbar (TT*) also gets the
+# per-jet top_match label in gen_info (no jets are dropped).
+H5OPTS=""
 case "$DATASET" in
-  QCD*|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
-  *)               STYPE=data; CONFIG=pfnano_data_2016UL_OpenData.py; NANO=nano_data2016.root;;
+  QCD*|TT*|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
+  *)                   STYPE=data; CONFIG=pfnano_data_2016UL_OpenData.py; NANO=nano_data2016.root;;
 esac
+case "$DATASET" in TT*) H5OPTS="--top_label";; esac
 
 # ---- bring up CMSSW (system /usr/bin/xrdcp in the image is usable now) ----
 source /cvmfs/cms.cern.ch/cmsset_default.sh
@@ -76,7 +79,10 @@ echo "staged $(wc -l < local_chunk.txt) file(s), $(du -sh "${WORK}/inputs" 2>/de
 # unclosed file). Only fail the job if NO (partial) output was produced.
 echo "===== Stage 1: cmsRun ${CONFIG}  ($(date)) ====="
 set +e
-cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}"
+# Thin the per-event log spam (~20 MB/job otherwise): keep every 10000th
+# "Begin processing" line; drop the MC-only Rivet HTXS warning (meaningless here).
+thin() { awk '/Begin processing the/ { if (++n % 10000) next } /HiggsTemplateCrossSections/ { next } { print; fflush() }'; }
+cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}" > >(thin) 2> >(thin >&2)
 cmsrc=$?
 set -e
 if [ "${cmsrc}" -ne 0 ]; then
@@ -91,7 +97,7 @@ if [ "$STYPE" = data ]; then
   python H5_maker.py -i "${NANO}" -o "${OUTNAME}" --sample_type data \
          -j Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt
 else
-  python H5_maker.py -i "${NANO}" -o "${OUTNAME}" --sample_type MC
+  python H5_maker.py -i "${NANO}" -o "${OUTNAME}" --sample_type MC ${H5OPTS}
 fi
 
 # ---- push the small output, drop the big intermediate ----

@@ -60,7 +60,13 @@ while read -r dataset filelist label; do
   if [ ! -f "$flist" ]; then echo "  WARN: missing file-list '$filelist' -- skipping"; continue; fi
 
   rm -f chunks/${label}_sub*
-  split -l "$FILES_PER_JOB" -d -a 3 "$flist" "chunks/${label}_sub"
+  # 3-digit chunk suffix (the established naming); widen only when >1000 chunks.
+  # Skip an empty list (split writes no chunk for it).
+  if ! grep -q . "$flist"; then echo "  WARN: empty file-list '$filelist' -- skipping"; continue; fi
+  nlines=$(grep -c '' "$flist")          # every line split -l counts, blank ones too
+  nchunk=$(( (nlines + FILES_PER_JOB - 1) / FILES_PER_JOB ))
+  width=3; [ "$nchunk" -gt 1000 ] && width=${#nchunk}
+  split -l "$FILES_PER_JOB" -d -a "$width" "$flist" "chunks/${label}_sub"
   for c in chunks/${label}_sub*; do
     sub="$(basename "$c")"          # e.g. 2016G_sub014
     out="out_${sub}.h5"
