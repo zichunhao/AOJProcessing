@@ -18,6 +18,13 @@ else
   esac
 fi
 
+# Optional semileptonic-ttbar stage of job.sh (details at TTBAR_TARBALL below).
+case "${AOJ_TTBAR:-}" in
+  ""|also|only) ;;
+  *) echo "config.sh: AOJ_TTBAR='${AOJ_TTBAR}' (expected unset, also or only)" >&2
+     return 1 2>/dev/null || exit 1 ;;
+esac
+
 # ----------------------------------------------------------------------------
 # Canonical AOJ store -- ALWAYS UAF (UCSD T2), matching the HH4b convention
 #   root://redirector.t2.ucsd.edu:1095//store/user/zichun/...
@@ -58,8 +65,9 @@ case "$SITE" in
     PROXY="${X509_USER_PROXY:-/tmp/x509up_u$(id -u)}"
     # LPC schedds can't see /eos: a cluster submitted from an /eos dir is HELD at
     # once ("Cannot access initial working directory"). submit.sh submits from
-    # here instead, so the job logs land in $SUBMIT_DIR/logs.
-    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor}"
+    # here instead, so the job logs land in $SUBMIT_DIR/logs. AOJ_TTBAR clusters
+    # get their own directory, so they never touch a jet-level cluster's files.
+    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor${AOJ_TTBAR:+_ttbar}}"
     STORE_LOCAL="${AOJ_STORE_LOCAL:-}"        # UCSD store isn't fuse-mounted at LPC
     # Output defaults to the UCSD ceph (STORE_XRD above) even from LPC. To keep
     # output on FNAL EOS instead, uncomment these two lines:
@@ -75,6 +83,15 @@ esac
 
 CMSSW_TARBALL="${CMSSW_VERSION}.tar.gz"
 
+# ---- Optional semileptonic-ttbar stage (MC; job.sh Stage 3) ----
+# AOJ_TTBAR: unset = jet-level only (submit.sub unchanged) | also | only.
+# Its code is <STORE>/cmssw/${TTBAR_TARBALL}, uploaded once by pack_ttbar.sh and
+# never replaced: bump the version HERE to ship changed ttbar_semilep/ code (an
+# AOJ_TTBAR_TARBALL override must then be set for run.sh jobs too).
+AOJ_TTBAR="${AOJ_TTBAR:-}"
+TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v1.tar.gz}"
+
 export SITE CMSSW_VERSION SCRAM_ARCH EL7_IMAGE FILES_PER_JOB NTHREADS \
        REQUEST_MEMORY REQUEST_DISK SALVAGE_PARALLEL \
-       STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL SUBMIT_DIR
+       STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL SUBMIT_DIR \
+       AOJ_TTBAR TTBAR_TARBALL

@@ -5,6 +5,7 @@
 # Self-contained & site-agnostic. Everything it needs arrives via the job
 # environment (set by submit.sub from config.sh):
 #     STORE_XRD CMSSW_VERSION CMSSW_TARBALL SCRAM_ARCH NTHREADS
+#     optional: AOJ_TTBAR TTBAR_TARBALL AOJ_MAX_EVENTS (see below)
 # Args:  <dataset>  <chunkfile-basename>  <output.h5>
 #
 # Flow:  fetch CMSSW tarball (xrootd) -> cmsenv -> STAGE inputs to scratch
@@ -12,6 +13,18 @@
 #        Inputs are copied locally first because streaming MINIAOD from eospublic
 #        over the WAN is latency-bound off-site (~10x slower); the big NanoAOD and
 #        the staged inputs never leave the worker scratch dir.
+#
+# Optional Stage 3, MC only: the semileptonic-ttbar tag-and-probe
+# (ttbar_semilep/ttbar_maker.py, see ttbar_semilep/LPC_PROMPT.md) on the same
+# NanoAOD, pushed to <STORE>/ttbar/tt_<chunk>.h5. Selected by AOJ_TTBAR:
+#   (unset)  jet-level only: the default, unchanged
+#   also     jet-level as above, then Stage 3; a Stage 3 failure only warns
+#            (the jet-level .h5 is already on the store)
+#   only     Stage 3 instead of H5_maker (no jet-level .h5); a failure holds the job
+# Its code is <STORE>/cmssw/${TTBAR_TARBALL} (pack_ttbar.sh), unpacked over the
+# CMSSW tarball's copy right after that tarball, before any staging, so a missing
+# or broken one holds the job at once. AOJ_MAX_EVENTS=N passes maxEvents=N to
+# cmsRun (pilots/tests only: the outputs then cover only N events per chunk).
 # ============================================================================
 set -e
 echo "===== AOJ job start $(date) on $(hostname) ====="
@@ -27,14 +40,23 @@ WORK="$(pwd)"
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
 
-# data vs MC selection (QCD*, TT*, *_mc*, MC_* => MC). ttbar (TT*) also gets the
-# per-jet top_match label in gen_info (no jets are dropped).
+# data vs MC selection (QCD*, TT*, ST_*, WJets*, *_mc*, MC_* => MC). ttbar (TT*)
+# also gets the per-jet top_match label in gen_info (no jets are dropped).
 H5OPTS=""
 case "$DATASET" in
-  QCD*|TT*|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
-  *)                   STYPE=data; CONFIG=pfnano_data_2016UL_OpenData.py; NANO=nano_data2016.root;;
+  QCD*|TT*|ST_*|WJets*|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
+  *)                               STYPE=data; CONFIG=pfnano_data_2016UL_OpenData.py; NANO=nano_data2016.root;;
 esac
 case "$DATASET" in TT*) H5OPTS="--top_label";; esac
+case "${AOJ_TTBAR:-}" in
+  "") ;;
+  also|only)
+    [ "$STYPE" = MC ] || { echo "FATAL: AOJ_TTBAR=${AOJ_TTBAR} is MC-only ($DATASET is data)"; exit 2; }
+    : "${TTBAR_TARBALL:=ttbar_semilep_v1.tar.gz}"
+    echo "ttbar stage: AOJ_TTBAR=${AOJ_TTBAR}  code=${STORE_XRD}/cmssw/${TTBAR_TARBALL}";;
+  *) echo "FATAL: AOJ_TTBAR='${AOJ_TTBAR}' (expected unset, also or only)"; exit 2;;
+esac
+if [ -n "${AOJ_MAX_EVENTS:-}" ]; then echo "TEST RUN: AOJ_MAX_EVENTS=${AOJ_MAX_EVENTS}: only that many events per chunk"; fi
 
 # ---- bring up CMSSW (system /usr/bin/xrdcp in the image is usable now) ----
 source /cvmfs/cms.cern.ch/cmsset_default.sh
@@ -46,6 +68,15 @@ cd "${WORK}/${CMSSW_VERSION}/src"
 scram b ProjectRename || echo "WARN: ProjectRename returned non-zero (continuing)"
 eval "$(scram runtime -sh)"
 cd AOJProcessing
+if [ -n "${AOJ_TTBAR:-}" ]; then
+  echo "Fetching ${STORE_XRD}/cmssw/${TTBAR_TARBALL} ..."
+  rm -rf ttbar_semilep
+  if ! { xrdcp -f "${STORE_XRD}/cmssw/${TTBAR_TARBALL}" "${WORK}/${TTBAR_TARBALL}" &&
+         tar xzf "${WORK}/${TTBAR_TARBALL}" && [ -f ttbar_semilep/ttbar_maker.py ]; }; then
+    echo "FATAL: cannot fetch/unpack ${TTBAR_TARBALL} (was condor/pack_ttbar.sh run for it?)"; exit 2
+  fi
+  rm -f "${WORK}/${TTBAR_TARBALL}"
+fi
 cp "${WORK}/${CHUNK}" ./remote_chunk.txt
 echo "=== input files ($(wc -l < remote_chunk.txt)) ==="; cat remote_chunk.txt
 
@@ -73,16 +104,16 @@ done < remote_chunk.txt
 echo "staged $(wc -l < local_chunk.txt) file(s), $(du -sh "${WORK}/inputs" 2>/dev/null | cut -f1) total"
 
 # ---- Stage 1: PFNano ----
-# Tolerate the rare DeepBoostedJet/ParticleNet segfault on a pathological jet:
-# cmsRun writes the NanoAOD incrementally, so on a crash we still salvage every
-# event written before it and let H5_maker process those (ROOT recovers the
-# unclosed file). Only fail the job if NO (partial) output was produced.
+# If cmsRun fails but left a NanoAOD, go on with it rather than failing at once.
+# Note: the CMSSW_10_6_30 NanoAOD output writes its trees only when the file is
+# closed, so a crash before that leaves no readable Events tree; H5_maker (or
+# ttbar_maker) then fails and the job is held (condor_release reruns it).
 echo "===== Stage 1: cmsRun ${CONFIG}  ($(date)) ====="
 set +e
 # Thin the per-event log spam (~20 MB/job otherwise): keep every 10000th
 # "Begin processing" line; drop the MC-only Rivet HTXS warning (meaningless here).
 thin() { awk '/Begin processing the/ { if (++n % 10000) next } /HiggsTemplateCrossSections/ { next } { print; fflush() }'; }
-cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}" > >(thin) 2> >(thin >&2)
+cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}" ${AOJ_MAX_EVENTS:+maxEvents=${AOJ_MAX_EVENTS}} > >(thin) 2> >(thin >&2)
 cmsrc=$?
 set -e
 if [ "${cmsrc}" -ne 0 ]; then
@@ -91,6 +122,7 @@ if [ "${cmsrc}" -ne 0 ]; then
   echo "Salvaging the events written before the crash from partial ${NANO} ($(ls -l "${NANO}" | awk '{print $5}') bytes)."
 fi
 
+if [ "${AOJ_TTBAR:-}" != only ]; then
 # ---- Stage 2: HDF5 ----
 echo "===== Stage 2: H5_maker  ($(date)) ====="
 if [ "$STYPE" = data ]; then
@@ -100,8 +132,28 @@ else
   python H5_maker.py -i "${NANO}" -o "${OUTNAME}" --sample_type MC ${H5OPTS}
 fi
 
-# ---- push the small output, drop the big intermediate ----
+# ---- push the small output ----
 echo "===== Push ${OUTNAME} -> ${STORE_XRD}/h5/  ($(date)) ====="
 xrdcp -f "${OUTNAME}" "${STORE_XRD}/h5/${OUTNAME}"
+fi
+
+# ---- Stage 3 (optional): semileptonic-ttbar tag-and-probe, see the header ----
+# Called as "ttbar_stage || ...", where set -e is off: every step returns explicitly.
+# py3env.sh runs python3 from the LCG_105a centos7 view, isolated from cmsenv.
+ttbar_stage() {
+  local tt="tt_${OUTNAME#out_}"
+  echo "===== Stage 3: ttbar_maker -> ${tt}  ($(date)) ====="
+  bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i "${NANO}" -o "${tt}" --sample_type MC \
+       --era 2016postVFP --trigger lepton_or_jetht --store one_probe || return 1
+  echo "===== Push ${tt} -> ${STORE_XRD}/ttbar/  ($(date)) ====="
+  xrdcp -f "${tt}" "${STORE_XRD}/ttbar/${tt}" || return 1
+  rm -f "${tt}"
+}
+case "${AOJ_TTBAR:-}" in
+  also) ttbar_stage || echo "WARNING: Stage 3 failed: ${OUTNAME} is on the store, tt_${OUTNAME#out_} is not (rerun with AOJ_TTBAR=only)";;
+  only) ttbar_stage || { echo "FATAL: Stage 3 (ttbar_maker) failed"; exit 1; };;
+esac
+
+# ---- drop the big intermediate ----
 rm -f "${NANO}" "${OUTNAME}"; rm -rf "${WORK}/inputs"
 echo "===== AOJ job done $(date) ====="

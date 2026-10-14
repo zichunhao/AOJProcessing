@@ -30,26 +30,46 @@ fi
 : > "$HERE/joblist.txt"
 njobs=0; skipped=0
 
+# What counts as already done: the jet-level out_<chunk>.h5 in h5/, or for
+# AOJ_TTBAR=only (no jet-level output) tt_<chunk>.h5 in ttbar/.
+OUTDIR=h5; PREFIX=out_
+if [ "${AOJ_TTBAR:-}" = only ]; then OUTDIR=ttbar; PREFIX=tt_; fi
+
+# list_store <dir> <file>: names in <STORE>/<dir> -> <file>, through the local
+# mount if present, else xrootd with a timeout.
+list_store() {
+  if [ -n "${STORE_LOCAL:-}" ] && [ -d "${STORE_LOCAL}/$1" ]; then
+    ls "${STORE_LOCAL}/$1" 2>/dev/null > "$2" || true
+    return 0
+  fi
+  # parse root://HOST//ABSPATH  ->  server=root://HOST/  dir=/ABSPATH/<dir>
+  local _t _server _dir
+  _t="${STORE_XRD#root://}"; _server="root://${_t%%//*}/"; _dir="/${_t#*//}/$1"
+  if timeout 180 xrdfs "$_server" ls "$_dir" > "$2.raw" 2>/dev/null; then
+    sed 's:.*/::' "$2.raw" > "$2"; rm -f "$2.raw"
+  else
+    echo "ERROR: listing the store's $1/ via xrootd timed out/failed (common from off-site;" >&2
+    echo "       ttbar/ exists once pack_ttbar.sh has run)." >&2
+    echo "       Re-run with an explicit missing list:  AOJ_MISSING=missing.txt ./run.sh jobs" >&2
+    rm -f "$2" "$2.raw"; exit 1
+  fi
+}
+
 # Decide which chunks to (re)submit. Two modes:
 #  - AOJ_MISSING=<file>: submit ONLY the chunk labels it lists (one per line, e.g.
 #    "2016G_sub014"); the store is NOT listed. Use this from LPC, where listing
 #    the UCSD store through the redirector (a directory ls) is slow/hangs.
-#  - otherwise (idempotent skip): list the store's h5/ once -- local mount if
-#    present, else xrootd with a timeout -- and skip outputs already there.
-existing="$(mktemp)"
+#  - otherwise (idempotent skip): list the store's h5/ (ttbar/ for AOJ_TTBAR=only)
+#    once and skip outputs already there. AOJ_TTBAR=also skips chunks that have
+#    out_ (no second jet-level run) and lists those without tt_ in missing_tt.txt,
+#    to backfill with AOJ_TTBAR=only.
+existing="$(mktemp)"; existing_tt=""; no_tt=0
 if [ -n "${AOJ_MISSING:-}" ] && [ -f "$AOJ_MISSING" ]; then
   echo "make_jobs: AOJ_MISSING set -> submitting only the $(grep -c . "$AOJ_MISSING") listed chunk(s); skipping store listing."
-elif [ -n "${STORE_LOCAL:-}" ] && [ -d "${STORE_LOCAL}/h5" ]; then
-  ls "${STORE_LOCAL}/h5" 2>/dev/null > "$existing" || true
 else
-  # parse root://HOST//ABSPATH  ->  server=root://HOST/  dir=/ABSPATH/h5
-  _t="${STORE_XRD#root://}"; _server="root://${_t%%//*}/"; _dir="/${_t#*//}/h5"
-  if timeout 180 xrdfs "$_server" ls "$_dir" > "${existing}.raw" 2>/dev/null; then
-    sed 's:.*/::' "${existing}.raw" > "$existing"; rm -f "${existing}.raw"
-  else
-    echo "ERROR: listing the store via xrootd timed out/failed (common from off-site)." >&2
-    echo "       Re-run with an explicit missing list:  AOJ_MISSING=missing.txt ./run.sh jobs" >&2
-    rm -f "$existing" "${existing}.raw"; exit 1
+  list_store "$OUTDIR" "$existing"
+  if [ "${AOJ_TTBAR:-}" = also ]; then
+    existing_tt="$(mktemp)"; list_store ttbar "$existing_tt"; : > "$HERE/missing_tt.txt"
   fi
 fi
 
@@ -72,8 +92,12 @@ while read -r dataset filelist label; do
     out="out_${sub}.h5"
     if [ -n "${AOJ_MISSING:-}" ] && [ -f "$AOJ_MISSING" ]; then
       grep -qxF "$sub" "$AOJ_MISSING" || continue          # queue only listed chunks
-    elif grep -qxF "$out" "$existing"; then
-      skipped=$((skipped+1)); continue
+    elif grep -qxF "${PREFIX}${sub}.h5" "$existing"; then
+      skipped=$((skipped+1))
+      if [ -n "$existing_tt" ] && ! grep -qxF "tt_${sub}.h5" "$existing_tt"; then
+        echo "$sub" >> "$HERE/missing_tt.txt"; no_tt=$((no_tt+1))
+      fi
+      continue
     fi
     # columns: dataset  chunkpath(rel to condor/)  chunkbase  outname
     echo "${dataset} chunks/${sub} ${sub} ${out}" >> "$HERE/joblist.txt"
@@ -81,6 +105,10 @@ while read -r dataset filelist label; do
   done
 done < "$REGEN"
 
-rm -f "$existing"
+rm -f "$existing" ${existing_tt:+"$existing_tt"}
 bash "$HERE/gen_submit.sh"
 echo "make_jobs: $njobs job(s) queued, $skipped already on storage (FILES_PER_JOB=$FILES_PER_JOB)."
+if [ "$no_tt" -gt 0 ]; then
+  echo "make_jobs: $no_tt of those have out_<chunk>.h5 but no tt_<chunk>.h5 (condor/missing_tt.txt); for them:"
+  echo "           AOJ_TTBAR=only AOJ_MISSING=missing_tt.txt ./run.sh jobs && ./run.sh submit"
+fi
