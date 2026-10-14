@@ -54,6 +54,10 @@ class Outputer:
         self.nBatch = 0
         self.n_pf_cands = 150 #how many PF candidates to save (max)
         self.year = year
+        self.isMC = (sample_type == "MC")
+        # per-file bookkeeping, written as root attributes (summed by H5_merge.py)
+        self.nEventsProcessed = 0
+        self.sumGenWeight = 0.
         self.reset()
 
     def reset(self):
@@ -62,6 +66,8 @@ class Outputer:
         self.jet_kinematics = np.zeros((self.batch_size, 4), dtype=np.float32)
         self.jet_tagging = np.zeros((self.batch_size, 13), dtype=np.float32)
         self.event_info = np.zeros((self.batch_size, 3), dtype=np.int64)
+        # MC only: genWeight, top_match (0/1/2 = none/W/top, -1 = not computed), hadronFlavour, nBHadrons, nCHadrons
+        self.gen_info = np.zeros((self.batch_size, 5), dtype=np.float32)
 
     def sort_pfcands(self, pfcands):
         #Sort by pt
@@ -73,7 +79,7 @@ class Outputer:
         return pfcands
 
     
-    def fill_jet(self, inTree, jet, PFCands, FatJetPFCands):
+    def fill_jet(self, inTree, jet, PFCands, FatJetPFCands, gen_info = None):
         
         eventNum = inTree.readBranch('event')
         lumiBlock = inTree.readBranch("luminosityBlock")
@@ -99,6 +105,7 @@ class Outputer:
         self.event_info[self.idx] = np.array(event_info, dtype=np.int64)
         self.jet_kinematics[self.idx] = np.array(jet_kinematics, dtype = np.float32)
         self.jet_tagging[self.idx] = np.array(jet_tagging, dtype = np.float32)
+        if(self.isMC): self.gen_info[self.idx] = np.array(gen_info, dtype = np.float32)
         
         if(len(jet_PFCands) > self.n_pf_cands): jet_PFCands = jet_PFCands[:self.n_pf_cands]
         self.PFCands[self.idx,:len(jet_PFCands)] = self.sort_pfcands(np.array(jet_PFCands, dtype = np.float32))
@@ -121,6 +128,8 @@ class Outputer:
                 f.create_dataset("jet_kinematics", data=self.jet_kinematics, chunks = True, maxshape=(None, self.jet_kinematics.shape[1]), compression = 'gzip')
                 f.create_dataset("jet_tagging", data=self.jet_tagging, chunks = True, maxshape=(None, self.jet_tagging.shape[1]), compression = 'gzip')
                 f.create_dataset("PFCands", data=self.PFCands, chunks = True, maxshape=(None, self.PFCands.shape[1], self.PFCands.shape[2]), compression='gzip')
+                if(self.isMC):
+                    f.create_dataset("gen_info", data=self.gen_info, chunks = True, maxshape=(None, self.gen_info.shape[1]), compression = 'gzip')
 
         else:
             with h5py.File(self.output_name, "a") as f:
@@ -128,6 +137,7 @@ class Outputer:
                 append_h5(f,'jet_kinematics',self.jet_kinematics)
                 append_h5(f,'jet_tagging',self.jet_tagging)
                 append_h5(f,'PFCands',self.PFCands)
+                if(self.isMC): append_h5(f,'gen_info',self.gen_info)
         self.reset()
 
     def final_write_out(self ):
@@ -137,14 +147,23 @@ class Outputer:
             self.jet_kinematics = self.jet_kinematics[:self.idx] 
             self.jet_tagging = self.jet_tagging[:self.idx] 
             self.event_info = self.event_info[:self.idx]
+            self.gen_info = self.gen_info[:self.idx]
 
         self.write_out()
+
+        # Normalization bookkeeping over ALL processed events (before trigger/filter/jet cuts).
+        # Summed (not averaged) across files by H5_merge.py.
+        with h5py.File(self.output_name, "a") as f:
+            f.attrs["nEventsProcessed"] = np.int64(self.nEventsProcessed)
+            if(self.isMC):
+                f.attrs["sumGenWeight"] = np.float64(self.sumGenWeight)
+                f["gen_info"].attrs["columns"] = np.array(["genWeight", "top_match", "hadronFlavour", "nBHadrons", "nCHadrons"], dtype="S")
 
 
 
 
 def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '', year = 2016, nEventsMax = -1, 
-        sampleType = "data", gen_match = -1, sort_pfcands=True):
+        sampleType = "data", gen_match = -1, sort_pfcands=True, top_label = False):
     
     if not ((sampleType == "MC") or (sampleType=="data")):
         print("Error! sampleType needs to be set to either data or MC! Please set correct option and retry.")
@@ -323,6 +342,9 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
             # Grab the event
             event = Event(inTree, entry)
 
+            out.nEventsProcessed += 1
+            if(isMC): out.sumGenWeight += inTree.readBranch('genWeight')
+
             passTrigger = False
             for trig in avail_triggers: passTrigger = passTrigger or inTree.readBranch(trig)
             if(not passTrigger): continue
@@ -338,11 +360,10 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
             
             AK8Jets = Collection(event, "FatJet")
 
-            if(isMC and gen_match > 0):
-                if(gen_match == top_ID): 
-                    gen_part1, gen_part2, W,antiW, q1a,q1b,b1, q2a,q2b,b2  = get_ttbar_gen_parts(event)
-                else: 
-                    V, q1a, q1b = get_vjets_gen_parts(event, V_ID = gen_match)
+            if(isMC and (gen_match == top_ID or top_label)):
+                gen_part1, gen_part2, W,antiW, q1a,q1b,b1, q2a,q2b,b2  = get_ttbar_gen_parts(event, verbose = False)
+            elif(isMC and gen_match > 0):
+                V, q1a, q1b = get_vjets_gen_parts(event, V_ID = gen_match)
 
 
             #keep jets with pt > 300, tight id
@@ -355,6 +376,14 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
                 #want tight id and tightLepVeto
                 if(jet.pt > jet_min_pt and (jet.jetId == 6) and abs(jet.eta) < 2.5):
 
+                    gen_info = None
+                    if(isMC):
+                        top_match = -1
+                        if(gen_match == top_ID or top_label):
+                            top_match = max(check_matching(jet, q1a, q1b, b1), check_matching(jet, q2a, q2b, b2))
+                        gen_info = [inTree.readBranch('genWeight'), top_match,
+                                    getattr(jet, 'hadronFlavour', -1), getattr(jet, 'nBHadrons', -1), getattr(jet, 'nCHadrons', -1)]
+
                     if(gen_match > 0):
                         #require gen match
                         if(gen_match == top_ID):
@@ -365,11 +394,11 @@ def NanoReader(inputFileNames=["in.root"], outputFileName="out.root", json = '',
                             match2 = False
 
                         if(match1 or match2):
-                            out.fill_jet(inTree, jet, PFCands, FatJetPFCands)
+                            out.fill_jet(inTree, jet, PFCands, FatJetPFCands, gen_info)
                             saved+=1
 
                     else:
-                        out.fill_jet(inTree, jet, PFCands, FatJetPFCands)
+                        out.fill_jet(inTree, jet, PFCands, FatJetPFCands, gen_info)
                         saved+=1
 
 
@@ -386,6 +415,7 @@ if(__name__ == "__main__"):
     parser = OptionParser()
     parser.add_option("--sample_type", default = "data", help="MC or data")
     parser.add_option("--gen_match", default =0, type =int, help="Require gen match to specific particle ID")
+    parser.add_option("--top_label", default = False, action = "store_true", help="MC ttbar: compute per-jet top_match (0/1/2) into gen_info without filtering jets")
     parser.add_option("-i", "--input", dest = "fin", default = '', help="Input file name")
     parser.add_option("-o", "--output", dest = "fout", default = 'test.h5', help="Output file name")
     parser.add_option("-j", "--json", default = '', help="Json file name")
@@ -395,6 +425,6 @@ if(__name__ == "__main__"):
     options, args = parser.parse_args()
 
     NanoReader(inputFileNames = [options.fin], outputFileName = options.fout, json = options.json, year = options.year, nEventsMax = options.nEvents, 
-                sampleType = options.sample_type, gen_match = options.gen_match)
+                sampleType = options.sample_type, gen_match = options.gen_match, top_label = options.top_label)
 
 

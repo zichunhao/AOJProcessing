@@ -8,6 +8,8 @@ from os.path import isfile, join
 # merge multiple h5's together (like hadd for root)
 # syntax is python H5_merge.py output_name.h5 input1.h5 input2.h5 input3.h5 ...
 
+SUMMED_ATTRS = ("nEventsProcessed", "sumGenWeight")
+
 def append_h5(f, name, data):
     prev_size = f[name].shape[0]
     f[name].resize(( prev_size + data.shape[0]), axis=0)
@@ -39,6 +41,11 @@ def merge(fin_name, fout_name):
 
     for key in fin_keys:
         append_h5(fout, key, fin[key])
+
+    # per-file normalization counters (nEventsProcessed, sumGenWeight) add up
+    for attr in fin.attrs:
+        if attr in SUMMED_ATTRS:
+            fout.attrs[attr] = fout.attrs.get(attr, 0) + fin.attrs[attr]
         
 
 
@@ -52,6 +59,8 @@ def my_copy(fin_name, fout_name):
         shape = list(fin[key].shape)
         shape[0] = None
         fout.create_dataset(key, data = fin[key], chunks = True, maxshape = shape, compression = fin[key].compression)
+        for attr in fin[key].attrs: fout[key].attrs[attr] = fin[key].attrs[attr]
+    for attr in fin.attrs: fout.attrs[attr] = fin.attrs[attr]
 
 
 

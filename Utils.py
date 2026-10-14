@@ -92,7 +92,7 @@ def get_ttbar_gen_parts(event, verbose = True):
     if(top is None or anti_top is None or W is None or anti_W is None):
         print("Couldnt find top or W: ")
         print(top, anti_top, W, anti_W)
-        #count = 0
+        count = 0
         for genPart in GenPartsColl:
             print(count, genPart.pdgId, genPart.pt, genPart.genPartIdxMother)
             count+=1
