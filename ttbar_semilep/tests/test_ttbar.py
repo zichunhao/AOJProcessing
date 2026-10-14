@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Tests of the semileptonic-ttbar selection / maker.
 #
-#   bash event_level/py3env.sh ttbar_semilep/tests/test_ttbar.py           # plain runner
+#   bash ttbar_semilep/py3env.sh ttbar_semilep/tests/test_ttbar.py         # plain runner (re-runs in el9 on el8)
 #   python3 -m pytest ttbar_semilep/tests/test_ttbar.py -k toy              # if pytest + deps are there
 #
 # Toy tests need nothing.  Tests on real NanoAOD are SKIPPED when the file is missing:
@@ -10,6 +10,7 @@
 #   AOJ_TT_TEST_PFNANO AOJ PFNano data file (default ../../run_2016H/nano_data2016.root, 64 events)
 #   AOJ_TT_TEST_OUT    output directory (default: a fresh temporary directory)
 # The real-file test compares the vectorised selection with an independent per-event loop.
+import ast
 import json
 import math
 import os
@@ -119,8 +120,36 @@ ALL = len(ts.CUTFLOW) - 1          # 8: passed everything
 S = dict((k, i) for i, k in enumerate(ts.CUTFLOW))
 
 
+def h5maker_lists():
+    """triggers / filters exactly as written in ../H5_maker.py (the drift-proof reference)."""
+    tree = ast.parse(open(os.path.join(AOJ, "H5_maker.py")).read())
+    found = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and node.targets[0].id in ("filters", "triggers"):
+            found[node.targets[0].id] = ast.literal_eval(node.value)
+    return found["triggers"], found["filters"]
+
+
+def test_aoj_lists_identical_to_h5maker():
+    """aoj_common.py (our copy) == H5_maker.py's lists, and == event_level/aoj_selection.py if present."""
+    trig, fil = h5maker_lists()
+    assert trig == ts.aoj.AOJ_TRIGGERS, "aoj_common.AOJ_TRIGGERS drifted from H5_maker.py"
+    assert fil == ts.aoj.AOJ_FILTERS, "aoj_common.AOJ_FILTERS drifted from H5_maker.py"
+    assert len(trig) == 85 and len(fil) == 8
+    ev = os.path.join(AOJ, "event_level", "aoj_selection.py")
+    if os.path.exists(ev):
+        tree = ast.parse(open(ev).read())
+        names = ("AOJ_TRIGGERS", "AOJ_FILTERS", "AOJ_JET_MIN_PT", "AOJ_JET_MAX_ABS_ETA", "AOJ_JET_ID")
+        theirs = dict((n.targets[0].id, ast.literal_eval(n.value)) for n in ast.walk(tree)
+                      if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                      and n.targets[0].id in names)
+        ours = dict((k, getattr(ts.aoj, k)) for k in names)
+        assert theirs == ours, "event_level/aoj_selection.py differs from aoj_common.py"
+
+
 def test_shared_lists_and_h5maker_columns():
-    """jet_tagging columns == H5_maker.py; AOJ triggers/filters come from event_level/aoj_selection.py."""
+    """jet_tagging columns == H5_maker.py."""
     src = open(os.path.join(AOJ, "H5_maker.py")).read()
     m = re.search(r"jet_tagging\s*=\s*\[(.*?)\]", src, re.S)
     names = [x.strip().replace("jet.", "") for x in m.group(1).replace("\n", " ").split(",") if x.strip()]

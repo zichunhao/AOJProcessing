@@ -6,7 +6,7 @@
 #   python3 ttbar_maker.py -i nano_data2016.root -o ttbar.h5 --sample_type data \
 #       -j ../Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt
 #   python3 ttbar_maker.py -i nano_mc2016post.root -o ttbar.h5 --sample_type MC
-#   (in production through ../event_level/py3env.sh, as the event-level tools)
+#   (through ttbar_semilep/py3env.sh: an isolated LCG_105a python3, never CMSSW's python2)
 #
 # Output (one row per stored event = one probe jet):
 #   event_info (N,3) int64, jet_kinematics (N,4), jet_tagging (N,13)  -- exactly H5_maker.py's columns
@@ -22,7 +22,7 @@
 # cut, whose decision is the ttbar_tag column pass_tau32); --store tau32 keeps the final selection.
 # ttbar_tag/stage holds how far each stored event got, so looser stores can be cut offline.
 #
-# Portability as event_level/event_maker.py: awkward only at the uproot boundary.
+# Portability (awkward 1.x / 2.x, uproot 4 / 5): awkward only at the uproot boundary.
 import argparse
 import json
 import os

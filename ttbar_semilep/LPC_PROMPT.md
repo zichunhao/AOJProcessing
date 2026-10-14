@@ -14,16 +14,15 @@ on branch **`ttbar-semilep`** of `git@github.com:zichunhao/AOJProcessing.git`:
 git fetch origin && git checkout ttbar-semilep      # or: git checkout origin/ttbar-semilep -- ttbar_semilep
 ```
 
-It depends on `event_level/aoj_selection.py` (the AOJ trigger/filter lists, golden-JSON mask, AOJ jet
-definition) and `event_level/py3env.sh` (Python 3 environment). These are **not in the git repo**. If your
-checkout has no `event_level/`, stop and ask the user for it; do not re-implement it.
+`ttbar_semilep/` is self-contained: it does not need `event_level/`. `aoj_common.py` is a copy of the AOJ
+trigger/filter lists, checked against `H5_maker.py` by a test, and `py3env.sh` is its own Python 3 environment.
 
-Then run the tests (Python 3 through `event_level/py3env.sh`, which supports el7/el9 hosts; on an el8 host wrap
-it in `/cvmfs/cms.cern.ch/common/cmssw-el9 --command-to-run bash -c '...'`):
+Then run the tests (Python 3 through `ttbar_semilep/py3env.sh`: LCG_105a on el7/el9; on an el8 host it re-runs
+itself inside `cmssw-el9`):
 
 ```bash
 cd CMSSW_10_6_30/src/AOJProcessing
-bash event_level/py3env.sh ttbar_semilep/tests/test_ttbar.py     # expect: N passed, 0 failed (real-file tests may SKIP)
+bash ttbar_semilep/py3env.sh ttbar_semilep/tests/test_ttbar.py     # expect: N passed, 0 failed (real-file tests may SKIP)
 ```
 
 Set `AOJ_TT_TEST_MC` (a NanoAOD/PFNano MC file with GenPart) and `AOJ_TT_TEST_MC_ERA` (`2016postVFP`) so the
@@ -86,17 +85,17 @@ between classes when training.
   with their truth category (`ttbar_selection.gen_truth` gives it; it needs a small "all AOJ jets, no tag
   selection" writer). Ask before building it.
 - Background: QCD AOJ jets, `H5_maker.py --sample_type MC` without gen matching (QCD file lists exist in
-  `file_lists/QCD_Pt*.txt`; `event_level/opendata_filelist.py` builds MC lists from Open Data records).
+  `file_lists/QCD_Pt*.txt`; `event_level/opendata_filelist.py`, where available, builds MC lists from Open Data records).
 
 ## 4. Task B: MC for the tag-and-probe evaluation and purity
 
 Run `ttbar_semilep/ttbar_maker.py` on the **Stage-1 PFNano output of each MC job, in the same Condor job, before
 the NanoAOD is deleted** (`job.sh` removes it after `H5_maker`). Push the small output next to the jet-level one,
-e.g. `<store>/ttbar/tt_<chunk>.h5`. `job_event.sh` shows how a py3 tool runs on the worker: `event_level/py3env.sh`
-with the LCG_105a centos7 view inside the EL7 image.
+e.g. `<store>/ttbar/tt_<chunk>.h5`. Run it on the worker with `ttbar_semilep/py3env.sh`, which uses the LCG_105a
+centos7 view inside the EL7 job image (`condor/job_event.sh`, if you have it, does the same for the event-level tools).
 
 ```bash
-bash event_level/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_mc2016post.root -o tt_<chunk>.h5 \
+bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_mc2016post.root -o tt_<chunk>.h5 \
      --sample_type MC --era 2016postVFP --trigger lepton_or_jetht --store one_probe
 ```
 
@@ -142,8 +141,8 @@ When asked:
 ## 6. Pitfalls found during the R&D
 
 - `HLT_Ele32_WPTight_Gsf` is absent in Run2016G: never use it alone for 2016.
-- `event_level/py3env.sh` fails on el8 hosts (no LCG_105a el8 build): use `cmssw-el9` there. Inside the EL7 job
-  image it works (centos7 view).
+- LCG_105a has no el8 build: `ttbar_semilep/py3env.sh` re-runs itself in `cmssw-el9` on el8 hosts (set
+  `AOJ_PY3ENV_NO_CONTAINER=1` to disable). Inside the EL7 job image it uses the centos7 view.
 - Remote reads from eospublic time out with uproot's default 30 s: `ttbar_maker.py --timeout` (default 600 s).
   Staging is how `job.sh` already handles MINIAOD.
 - MC normalisation = `gen_weight * xsec * lumi / sum(sum_genweight of the processed files)`. Use only the files

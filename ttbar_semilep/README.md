@@ -40,15 +40,19 @@ MC truth (`gen_truth`): partons of each hadronic W (and its top's b) within dR <
 ## Usage
 
 ```bash
-# from AOJProcessing/ (python3 env as for event_level)
-bash event_level/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_data2016.root -o tt.h5 --sample_type data \
+# from AOJProcessing/; ttbar_semilep/py3env.sh = isolated python3 (LCG_105a; on EL8 it re-runs itself in cmssw-el9)
+bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_data2016.root -o tt.h5 --sample_type data \
      -j Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt          # SingleMuon / SingleElectron
-bash event_level/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_mc2016post.root -o tt.h5 --sample_type MC \
+bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i nano_mc2016post.root -o tt.h5 --sample_type MC \
      --trigger lepton_or_jetht --store one_probe                              # keep everything for studies
-bash event_level/py3env.sh ttbar_semilep/ttbar_summary.py --lumi 16.39 --mc TTToSemiLeptonic:365.34:'tt_*.h5' \
+bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_summary.py --lumi 16.39 --mc TTToSemiLeptonic:365.34:'tt_*.h5' \
      --data SingleMuon:1:'sm_*.h5' --route lepton
-bash event_level/py3env.sh ttbar_semilep/tests/test_ttbar.py               # tests (toy + real-file, skip if missing)
+bash ttbar_semilep/py3env.sh ttbar_semilep/tests/test_ttbar.py               # tests (toy + real-file, skip if missing)
 ```
+
+Self-contained: the AOJ trigger/filter lists, golden-JSON mask and AOJ jet definition are a copy
+(`aoj_common.py`) of `event_level/aoj_selection.py`; a test checks them against `H5_maker.py` (and against
+`event_level/` when present).
 
 `--store` (default `btag`) sets which events are written; `ttbar_tag/stage` records how far each stored event
 got (index in `cutflow.attrs["stages"]`), so the default output holds the substructure-unbiased (`btag`) sample
@@ -136,8 +140,8 @@ are one_probe (6.5 %: a pT > 300, mSD > 50 AK8 jet) and tau32 (12 % of btag-leve
 fully-merged tops). Non-ttbar after HIG-24-010 is mostly single top (5 %, itself mostly real tops), W+jets (3 %)
 and QCD (~1–7 %, poorly known: 35 raw MuEnriched / 4 raw QCD-HT events survive). Data/MC = 0.91 at btag level and
 0.85 at HIG-24-010 level (no top-pT reweighting or b-tag / lepton / tau32 scale factors applied).
-On el8 UAF nodes run through `cmssw-el9` (`rnd/run_jobs.sh` does): LCG_105a has no el8 build and
-`event_level/py3env.sh` only handles el7/el9.
+LCG_105a has no el8 build: `ttbar_semilep/py3env.sh` re-runs itself inside `cmssw-el9` on el8 hosts, and
+`rnd/run_jobs.sh` does the same for the R&D jobs.
 
 Speed: ~1 min per 1.5M-event NanoAODv9 file read remotely from FNAL (only the ~80 needed branches), ~10 min
 from the UAF ceph JMENano copies; eospublic xrootd direct reads timed out with uproot's default 30 s

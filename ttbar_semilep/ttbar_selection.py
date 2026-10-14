@@ -25,8 +25,8 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "event_level"))
-import aoj_selection as aoj  # noqa: E402  (AOJ trigger/filter lists, LumiMask, AOJ jet definition)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import aoj_common as aoj  # noqa: E402  (AOJ trigger/filter lists, LumiMask, AOJ jet definition; copy of event_level's)
 
 # ---------------------------------------------------------------------------
 # Era-dependent inputs.  Triggers per trigger set: "an" = the isolated single-lepton paths of the
