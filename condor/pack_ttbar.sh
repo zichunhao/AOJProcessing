@@ -31,12 +31,14 @@ remote_size() {
   return 0
 }
 
-# <STORE>/ttbar/ (idempotent; also when the tarball itself is already there)
-if [ -n "$LOCAL" ]; then
-  mkdir -p "$STORE_LOCAL/cmssw" "$STORE_LOCAL/ttbar"
-elif ! timeout 120 xrdfs "$_server" stat "${_dir}/ttbar" > /dev/null 2>&1; then
-  timeout 120 xrdfs "$_server" mkdir -p "${_dir}/ttbar"
-fi
+# <STORE>/ttbar/ and <STORE>/ttbar_skim/ (idempotent; also when the tarball itself is already there)
+for _sub in ttbar ttbar_skim; do
+  if [ -n "$LOCAL" ]; then
+    mkdir -p "$STORE_LOCAL/cmssw" "$STORE_LOCAL/$_sub"
+  elif ! timeout 120 xrdfs "$_server" stat "${_dir}/$_sub" > /dev/null 2>&1; then
+    timeout 120 xrdfs "$_server" mkdir -p "${_dir}/$_sub"
+  fi
+done
 
 have="$(remote_size "cmssw/${TTBAR_TARBALL}")"
 if [ -n "$have" ]; then

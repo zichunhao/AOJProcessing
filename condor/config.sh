@@ -24,6 +24,18 @@ case "${AOJ_TTBAR:-}" in
   *) echo "config.sh: AOJ_TTBAR='${AOJ_TTBAR}' (expected unset, also or only)" >&2
      return 1 2>/dev/null || exit 1 ;;
 esac
+# AOJ_TTBAR_PRESET: ttbar_maker cut preset of that stage (unset or "an" = the default selection;
+# "skim" = the loose superset for offline cuts, see ttbar_semilep/ttbar_selection.py). A non-default
+# preset writes <STORE>/ttbar_<preset>/ and submits from its own SUBMIT_DIR, so it never mixes with
+# the default outputs.
+case "${AOJ_TTBAR_PRESET:-}" in
+  ""|an) TTBAR_PRESET="" ;;
+  an160|paper|skim) TTBAR_PRESET="$AOJ_TTBAR_PRESET"
+    [ -n "${AOJ_TTBAR:-}" ] || { echo "config.sh: AOJ_TTBAR_PRESET needs AOJ_TTBAR=also|only" >&2; return 1 2>/dev/null || exit 1; } ;;
+  *) echo "config.sh: AOJ_TTBAR_PRESET='${AOJ_TTBAR_PRESET}' (expected unset, an, an160, paper or skim)" >&2
+     return 1 2>/dev/null || exit 1 ;;
+esac
+TTBAR_SUBDIR="ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}"
 
 # ----------------------------------------------------------------------------
 # Canonical AOJ store -- ALWAYS UAF (UCSD T2), matching the HH4b convention
@@ -67,7 +79,7 @@ case "$SITE" in
     # once ("Cannot access initial working directory"). submit.sh submits from
     # here instead, so the job logs land in $SUBMIT_DIR/logs. AOJ_TTBAR clusters
     # get their own directory, so they never touch a jet-level cluster's files.
-    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor${AOJ_TTBAR:+_ttbar}}"
+    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor${AOJ_TTBAR:+_ttbar}${TTBAR_PRESET:+_$TTBAR_PRESET}}"
     STORE_LOCAL="${AOJ_STORE_LOCAL:-}"        # UCSD store isn't fuse-mounted at LPC
     # Output defaults to the UCSD ceph (STORE_XRD above) even from LPC. To keep
     # output on FNAL EOS instead, uncomment these two lines:
@@ -89,9 +101,9 @@ CMSSW_TARBALL="${CMSSW_VERSION}.tar.gz"
 # never replaced: bump the version HERE to ship changed ttbar_semilep/ code (an
 # AOJ_TTBAR_TARBALL override must then be set for run.sh jobs too).
 AOJ_TTBAR="${AOJ_TTBAR:-}"
-TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v1.tar.gz}"
+TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v2.tar.gz}"   # v1 = afd845f (no "skim" preset)
 
 export SITE CMSSW_VERSION SCRAM_ARCH EL7_IMAGE FILES_PER_JOB NTHREADS \
        REQUEST_MEMORY REQUEST_DISK SALVAGE_PARALLEL \
        STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL SUBMIT_DIR \
-       AOJ_TTBAR TTBAR_TARBALL
+       AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR

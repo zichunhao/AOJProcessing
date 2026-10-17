@@ -55,13 +55,19 @@ Individual steps are also available: `./run.sh pack|validate|salvage|jobs|submit
 ## Retrying failed jobs
 Failed jobs are **held** (kept in the queue), not dropped — `submit.sub` sets
 `on_exit_hold = (ExitBySignal == true) || (ExitCode != 0)`, and `job.sh` runs
-under `set -e`. So after a batch:
+under `set -e`. Condor retries each failed job **once** by itself: `periodic_release`
+releases a first `job.sh failed` hold 30 min after it happened. A job held again after that
+retry, or held for any other reason (memory, `condor_hold`, submitted on hold), stays held.
+So after a batch:
 ```bash
-condor_q <cluster>            # HELD = failed; running/idle = still going
-condor_release <cluster>     # re-run just the failed ones -- no resubmit / store-listing
+condor_q <cluster>                 # HELD = failed twice (or held on purpose); running/idle = still going
+condor_release <cluster>.<proc>    # re-run one by hand -- no resubmit / store-listing
 ```
-Repeat until nothing is held; inspect a `logs/out_<chunk>.h5.err` to see why before
-releasing. (Evictions are *not* held — Condor auto-reschedules those.)
+Inspect its `logs/out_<chunk>.h5.err` to see why before releasing. To stop the automatic
+retry (e.g. while the store is down), `condor_qedit <cluster> PeriodicRelease False`.
+`condor_release <cluster>` releases every held job of the cluster, including ones
+submitted with `AOJ_SUBMIT_HOLD=1` that are still waiting their turn. (Evictions are *not*
+held — Condor auto-reschedules those.)
 
 To (re)submit only specific chunks **without** listing the store (handy off-site,
 where the redirector directory `ls` is slow), put their labels (e.g. `2016G_sub014`,
@@ -77,7 +83,8 @@ one per line) in a file and run `AOJ_MISSING=missing.txt ./run.sh jobs`.
 | `REQUEST_DISK` | `20000000` | KB (~19 GB; holds the staged MINIAOD + NanoAOD) |
 | `AOJ_STORE_XRD` | UCSD ceph | output store (xrootd) |
 | `AOJ_TTBAR` | unset | `also` / `only`: run the ttbar tag-and-probe stage (above) |
-| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v1.tar.gz` | its code tarball in `<store>/cmssw/` |
+| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v2.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset) |
+| `AOJ_TTBAR_PRESET` | unset (`an`) | ttbar_maker preset of that stage; a non-default one (e.g. `skim`) writes `<store>/ttbar_<preset>/` and gets its own `SUBMIT_DIR` and log tag |
 | `AOJ_SUBMIT_HOLD` | unset | `1`: submit the cluster held |
 | `AOJ_SUBMIT_FORCE` | unset | `1`: let `submit.sh` replace a different `job.sh`/chunk in `SUBMIT_DIR` |
 
@@ -115,6 +122,9 @@ AOJ_TTBAR=only ./run.sh jobs && ./run.sh submit   # tt_<chunk>.h5 only (no H5_ma
   (the jet-level `.h5` is already pushed), and `make_jobs.sh` skips chunks whose `out_<chunk>.h5` exists,
   listing those without a `tt_` file in `missing_tt.txt` to backfill with
   `AOJ_TTBAR=only AOJ_MISSING=missing_tt.txt ./run.sh jobs && ./run.sh submit`.
+- `AOJ_TTBAR_PRESET=skim` (needs `AOJ_TTBAR`) runs `ttbar_maker.py --preset skim` and pushes to
+  `<store>/ttbar_skim/` (`make_jobs.sh` then lists that directory), from `~/nobackup/aoj_condor_ttbar_skim`
+  with logs `*.ttbar-<mode>-skim.*`. Unset, nothing changes.
 - On LPC, `AOJ_TTBAR` clusters default to their own `SUBMIT_DIR` (`~/nobackup/aoj_condor_ttbar`), and
   their logs are `logs/out_<chunk>.h5.ttbar-<mode>.{out,err,log}`. `submit.sh` refuses to replace a
   different `job.sh` or chunk file in a `SUBMIT_DIR` (queued jobs read them when they start) unless

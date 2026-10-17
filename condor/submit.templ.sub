@@ -21,10 +21,19 @@ request_disk            = @REQUEST_DISK@
 # Hold (keep in the queue) any job that FAILS, instead of letting it leave
 # silently. job.sh runs under `set -e`, so any failed step -> non-zero exit (or a
 # signal) -> the job goes HELD; a success exits 0 and leaves with its .h5 on the
-# store. Retry the failures with:   condor_release <cluster>
-# (evictions don't trigger this -- Condor auto-reschedules those.)
+# store. (Evictions don't trigger this -- Condor auto-reschedules those.)
 on_exit_hold            = (ExitBySignal == true) || (ExitCode != 0)
 on_exit_hold_reason     = "job.sh failed (see logs/$(outname)@LOGTAG@.err); condor_release to retry"
+# Wall-time limit: about 1-2% of cmsRun runs go 4-15x slower or hang while closing the output
+# (a rerun is normal), so a run over 20 h (normal max ~17 h) is held (code 46) by HTCondor itself.
+allowed_job_duration    = 72000
+# Condor retries each failure ONCE by itself, 30 min after the hold (time to stop it during a store
+# outage: condor_qedit <job> PeriodicRelease False): a first job.sh failure, or the wall-time limit
+# on the job's first run. (The per-reason hold counters jump by several for a hold made while the
+# job runs, so the wall-time retry counts runs instead.) A second failure, or any other hold
+# (memory, user, submitted-on-hold), stays held. Release those by job id; never
+# "condor_release <cluster>" on a cluster submitted with AOJ_SUBMIT_HOLD=1 while it waits.
+periodic_release        = ((HoldReasonCode =?= 3) && regexp("^job.sh failed", HoldReason) && (NumHoldsByReason.JobPolicy =?= 1) && ((time() - EnteredCurrentStatus) > 1800)) || ((HoldReasonCode =?= 46) && (NumJobStarts =?= 1) && ((time() - EnteredCurrentStatus) > 1800))
 
 output                  = logs/$(outname)@LOGTAG@.out
 error                   = logs/$(outname)@LOGTAG@.err

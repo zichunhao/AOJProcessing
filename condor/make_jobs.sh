@@ -31,9 +31,10 @@ fi
 njobs=0; skipped=0
 
 # What counts as already done: the jet-level out_<chunk>.h5 in h5/, or for
-# AOJ_TTBAR=only (no jet-level output) tt_<chunk>.h5 in ttbar/.
+# AOJ_TTBAR=only (no jet-level output) tt_<chunk>.h5 in ttbar/ (ttbar_<preset>/ for a
+# non-default AOJ_TTBAR_PRESET).
 OUTDIR=h5; PREFIX=out_
-if [ "${AOJ_TTBAR:-}" = only ]; then OUTDIR=ttbar; PREFIX=tt_; fi
+if [ "${AOJ_TTBAR:-}" = only ]; then OUTDIR="${TTBAR_SUBDIR:-ttbar}"; PREFIX=tt_; fi
 
 # list_store <dir> <file>: names in <STORE>/<dir> -> <file>, through the local
 # mount if present, else xrootd with a timeout.
@@ -69,7 +70,7 @@ if [ -n "${AOJ_MISSING:-}" ] && [ -f "$AOJ_MISSING" ]; then
 else
   list_store "$OUTDIR" "$existing"
   if [ "${AOJ_TTBAR:-}" = also ]; then
-    existing_tt="$(mktemp)"; list_store ttbar "$existing_tt"; : > "$HERE/missing_tt.txt"
+    existing_tt="$(mktemp)"; list_store "${TTBAR_SUBDIR:-ttbar}" "$existing_tt"; : > "$HERE/missing_tt.txt"
   fi
 fi
 

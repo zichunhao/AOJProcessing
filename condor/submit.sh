@@ -23,6 +23,10 @@ if [ -z "${AOJ_TTBAR:-}" ] && [ -f "$HERE/submit.sub" ]; then
   _m="$(sed -n 's/^environment .* AOJ_TTBAR=\([a-z]*\).*/\1/p' "$HERE/submit.sub")"
   if [ -n "$_m" ]; then export AOJ_TTBAR="$_m"; fi
 fi
+if [ -z "${AOJ_TTBAR_PRESET:-}" ] && [ -f "$HERE/submit.sub" ]; then      # and its preset
+  _p="$(sed -n 's/^environment .* TTBAR_PRESET=\([a-z0-9]*\).*/\1/p' "$HERE/submit.sub")"
+  if [ -n "$_p" ]; then export AOJ_TTBAR_PRESET="$_p"; fi
+fi
 source "$HERE/config.sh"
 cd "$HERE"
 if [ ! -s joblist.txt ]; then echo "joblist.txt empty -- nothing to submit."; exit 0; fi

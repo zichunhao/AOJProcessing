@@ -5,7 +5,7 @@
 # Self-contained & site-agnostic. Everything it needs arrives via the job
 # environment (set by submit.sub from config.sh):
 #     STORE_XRD CMSSW_VERSION CMSSW_TARBALL SCRAM_ARCH NTHREADS
-#     optional: AOJ_TTBAR TTBAR_TARBALL AOJ_MAX_EVENTS (see below)
+#     optional: AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR AOJ_MAX_EVENTS (see below)
 # Args:  <dataset>  <chunkfile-basename>  <output.h5>
 #
 # Flow:  fetch CMSSW tarball (xrootd) -> cmsenv -> STAGE inputs to scratch
@@ -23,7 +23,9 @@
 #   only     Stage 3 instead of H5_maker (no jet-level .h5); a failure holds the job
 # Its code is <STORE>/cmssw/${TTBAR_TARBALL} (pack_ttbar.sh), unpacked over the
 # CMSSW tarball's copy right after that tarball, before any staging, so a missing
-# or broken one holds the job at once. AOJ_MAX_EVENTS=N passes maxEvents=N to
+# or broken one holds the job at once. TTBAR_PRESET (set with TTBAR_SUBDIR by
+# gen_submit.sh) picks a non-default ttbar_maker preset, written to
+# <STORE>/${TTBAR_SUBDIR}/ instead of ttbar/. AOJ_MAX_EVENTS=N passes maxEvents=N to
 # cmsRun (pilots/tests only: the outputs then cover only N events per chunk).
 # ============================================================================
 set -e
@@ -53,7 +55,7 @@ case "${AOJ_TTBAR:-}" in
   also|only)
     [ "$STYPE" = MC ] || { echo "FATAL: AOJ_TTBAR=${AOJ_TTBAR} is MC-only ($DATASET is data)"; exit 2; }
     : "${TTBAR_TARBALL:=ttbar_semilep_v1.tar.gz}"
-    echo "ttbar stage: AOJ_TTBAR=${AOJ_TTBAR}  code=${STORE_XRD}/cmssw/${TTBAR_TARBALL}";;
+    echo "ttbar stage: AOJ_TTBAR=${AOJ_TTBAR}  code=${STORE_XRD}/cmssw/${TTBAR_TARBALL}${TTBAR_PRESET:+  preset=${TTBAR_PRESET} -> ${TTBAR_SUBDIR}/}";;
   *) echo "FATAL: AOJ_TTBAR='${AOJ_TTBAR}' (expected unset, also or only)"; exit 2;;
 esac
 if [ -n "${AOJ_MAX_EVENTS:-}" ]; then echo "TEST RUN: AOJ_MAX_EVENTS=${AOJ_MAX_EVENTS}: only that many events per chunk"; fi
@@ -141,12 +143,13 @@ fi
 # Called as "ttbar_stage || ...", where set -e is off: every step returns explicitly.
 # py3env.sh runs python3 from the LCG_105a centos7 view, isolated from cmsenv.
 ttbar_stage() {
-  local tt="tt_${OUTNAME#out_}"
+  local tt="tt_${OUTNAME#out_}" sub="${TTBAR_SUBDIR:-ttbar}" pre=()
+  [ -n "${TTBAR_PRESET:-}" ] && pre=(--preset "${TTBAR_PRESET}")
   echo "===== Stage 3: ttbar_maker -> ${tt}  ($(date)) ====="
   bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i "${NANO}" -o "${tt}" --sample_type MC \
-       --era 2016postVFP --trigger lepton_or_jetht --store one_probe || return 1
-  echo "===== Push ${tt} -> ${STORE_XRD}/ttbar/  ($(date)) ====="
-  xrdcp -f "${tt}" "${STORE_XRD}/ttbar/${tt}" || return 1
+       --era 2016postVFP --trigger lepton_or_jetht --store one_probe "${pre[@]}" || return 1
+  echo "===== Push ${tt} -> ${STORE_XRD}/${sub}/  ($(date)) ====="
+  xrdcp -f "${tt}" "${STORE_XRD}/${sub}/${tt}" || return 1
   rm -f "${tt}"
 }
 case "${AOJ_TTBAR:-}" in
