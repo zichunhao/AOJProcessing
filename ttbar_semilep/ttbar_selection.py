@@ -13,6 +13,11 @@
 # for IsoMu27); electrons HLT_Ele27_WPTight_Gsf || HLT_Ele32_WPTight_Gsf (Ele32_WPTight does not exist in Run2016G).
 # The "paper" preset approximates the region as described in the HIG-24-010 paper (lepton pT > 50, veto
 # leptons > 10, an AK8 jet with mSD > 50, no dphi cut, b-jet dR > 0.8 / 0.4, also the high-pT paths).
+# The "skim" preset is a loose superset for offline cuts: isolated OR high-pT lepton paths, a tight-ID
+# lepton with pT > 30 and relIso < 1 (electrons: the no-iso MVA WP80), MET > 20, any number of AK8 jets
+# above 300 (probe = the leading AOJ jet with dR(lepton) > 0.8).  The tag lepton is the "an"-tight one
+# whenever the event has one, and the outputs an_channel / trig_*_an / n_ak8 / met_pt / lep_* let the
+# "an" selection be re-applied offline.
 #
 # Cut flow (cumulative, per channel mu / el):
 #   all -> trigger -> filters_json -> one_lepton -> met -> one_probe -> dphi -> btag -> tau32
@@ -60,6 +65,9 @@ ERAS = {
         "btag_wp": {"L": 0.0490, "M": 0.2783, "T": 0.7100},
     },
 }
+for _e in ERAS.values():         # "skim" = the union of the "an" and the "paper" paths, per channel
+    _t = _e["triggers"]
+    _t["skim"] = dict((ch, _t["an"][ch] + [p for p in _t["paper"][ch] if p not in _t["an"][ch]]) for ch in ("mu", "el"))
 DEFAULT_ERA = "2016postVFP"      # Run2016G + Run2016H (the AOJ eras)
 
 DEFAULT_CUTS = {                 # == PRESETS["an"]
@@ -91,6 +99,12 @@ DEFAULT_CUTS = {                 # == PRESETS["an"]
     "b_min_dr_fj": 1.5,
     "b_min_dr_lep": 0.5,
     "tau32_max": 0.5,
+    # lepton logic: "an" = exactly one tight lepton and no other veto lepton; "skim" = >= 1 tight lepton,
+    # the "an"-tight one preferred (no veto; an_channel keeps the "an" decision)
+    "lep_mode": "an",
+    "el_max_reliso": 0.0,         # Electron_pfRelIso03_all upper cut on the tight electron (0 = none)
+    "max_n_ak8": 1,               # counted AK8 jets allowed (1 = "exactly one")
+    "probe_min_dr_lep": 0.0,      # dR(probe, tag lepton) lower cut on the probe choice (0 = none)
 }
 PRESETS = {
     "an": dict(DEFAULT_CUTS),
@@ -100,7 +114,12 @@ PRESETS = {
     "paper": dict(DEFAULT_CUTS, trigger_set="paper", lep_min_pt=50.0, el_max_abs_eta=2.5, veto_min_pt=10.0,
                   fj_count_min_pt=300.0, fj_min_msd=50.0, min_dphi_lep_probe=0.0, b_min_pt=30.0, b_min_dr_fj=0.8,
                   b_min_dr_lep=0.4),
+    # loose skim (see the header); dphi / btag / tau32 stay as in "an" (they are applied offline anyway)
+    "skim": dict(DEFAULT_CUTS, trigger_set="skim", lep_mode="skim", lep_min_pt=30.0, mu_max_reliso=1.0,
+                 el_id="mvaFall17V2noIso_WP80", el_max_reliso=1.0, met_min=20.0, max_n_ak8=99, probe_min_dr_lep=0.8),
 }
+AN_EL_ID = DEFAULT_CUTS["el_id"]          # the "an" electron ID (lep_id_iso, an_channel)
+LEP_MODES = ("an", "skim")
 
 CUTFLOW = ["all", "trigger", "filters_json", "one_lepton", "met", "one_probe", "dphi", "btag", "tau32"]
 CHANNELS = ["mu", "el"]          # channel code = index + 1 (0 = no channel)
@@ -185,6 +204,13 @@ class Coll(object):
         out[ok] = v[gidx[ok]]
         return out
 
+    def take_bool(self, mask, gidx):
+        """Per-event value of a per-object boolean array at global rows gidx (False where gidx < 0)."""
+        out = np.zeros(len(gidx), dtype=bool)
+        ok = gidx >= 0
+        out[ok] = np.asarray(mask, bool)[gidx[ok]]
+        return out
+
     def local(self, gidx):
         out = np.full(len(gidx), -1, dtype=np.int64)
         ok = gidx >= 0
@@ -218,11 +244,19 @@ def muon_masks(mu, c):
     return tight, veto | tight
 
 
+def electron_iso(el):
+    """Electron_pfRelIso03_all, NaN where the input does not have it."""
+    return el["pfRelIso03_all"] if "pfRelIso03_all" in el else np.full(len(el.evt), np.nan)
+
+
 def electron_masks(el, c):
     sc_eta = np.abs(el["eta"] + el["deltaEtaSC"])
     acc = sc_eta < c["el_max_abs_eta"]
     gap = (sc_eta > 1.4442) & (sc_eta < 1.5660)
     tight = acc & ~gap & (el["pt"] > c["lep_min_pt"]) & el[c["el_id"]].astype(bool)
+    if c["el_max_reliso"] > 0:
+        with np.errstate(invalid="ignore"):
+            tight = tight & (electron_iso(el) < c["el_max_reliso"])
     veto = acc & (el["pt"] > c["veto_min_pt"]) & (el["cutBased"] >= c["veto_el_min_cutbased"])
     return tight, veto | tight
 
@@ -259,6 +293,8 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
         raise KeyError("unknown trigger mode '%s' (known: %s)" % (trigger, ", ".join(TRIGGER_MODES)))
     E = ERAS[era]
     c = merged_cuts(cuts)
+    if c["lep_mode"] not in LEP_MODES:
+        raise KeyError("unknown lep_mode '%s' (known: %s)" % (c["lep_mode"], ", ".join(LEP_MODES)))
     mu, el, jet, fj = ev["Muon"], ev["Electron"], ev["Jet"], ev["FatJet"]
     n = mu.n
     out = {}
@@ -269,6 +305,9 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     trig_el = any_fired(ev, T["el"], n)
     trig_jet = any_fired(ev, aoj.AOJ_TRIGGERS, n)
     out.update(trig_mu=trig_mu, trig_el=trig_el, trig_jetht=trig_jet)
+    T_an = E["triggers"]["an"]                  # the "an" paths, for re-applying "an" offline
+    out["trig_mu_an"] = trig_mu if T_an is T else any_fired(ev, T_an["mu"], n)
+    out["trig_el_an"] = trig_el if T_an is T else any_fired(ev, T_an["el"], n)
     if trigger == "lepton":
         t_ch = {"mu": trig_mu, "el": trig_el}
     elif trigger == "jetht":
@@ -288,9 +327,34 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     mu_t, mu_v = muon_masks(mu, c)
     el_t, el_v = electron_masks(el, c)
     n_mu_t, n_mu_v, n_el_t, n_el_v = mu.count(mu_t), mu.count(mu_v), el.count(el_t), el.count(el_v)
-    is_mu = (n_mu_t == 1) & (n_mu_v == 1) & (n_el_v == 0)
-    is_el = (n_el_t == 1) & (n_el_v == 1) & (n_mu_v == 0)
-    imu, iel = mu.first(mu_t), el.first(el_t)
+    ca = c if c["lep_mode"] == "an" else PRESETS["an"]      # "an" lepton decision (an_channel)
+    if ca is c:
+        mu_ta, el_ta, n_mu_va, n_el_va = mu_t, el_t, n_mu_v, n_el_v
+    else:
+        mu_ta, mu_va = muon_masks(mu, ca)
+        el_ta, el_va = electron_masks(el, ca)
+        n_mu_va, n_el_va = mu.count(mu_va), el.count(el_va)
+    an_mu = (mu.count(mu_ta) == 1) & (n_mu_va == 1) & (n_el_va == 0)
+    an_el = (el.count(el_ta) == 1) & (n_el_va == 1) & (n_mu_va == 0)
+    out["an_channel"] = np.where(an_mu, 1, np.where(an_el, 2, 0)).astype(np.int8)
+    if c["lep_mode"] == "an":
+        is_mu = (n_mu_t == 1) & (n_mu_v == 1) & (n_el_v == 0)
+        is_el = (n_el_t == 1) & (n_el_v == 1) & (n_mu_v == 0)
+        imu, iel = mu.first(mu_t), el.first(el_t)
+    else:
+        # >= 1 tight lepton; per flavour the "an"-tight one if any (so an "an" event keeps its lepton),
+        # then the flavour with an "an"-tight lepton, else the higher-pt one
+        fa_mu, fa_el = mu.first(mu_ta), el.first(el_ta)
+        imu = np.where(fa_mu >= 0, fa_mu, mu.first(mu_t))
+        iel = np.where(fa_el >= 0, fa_el, el.first(el_t))
+        has_mu, has_el = imu >= 0, iel >= 0
+        a_mu, a_el = fa_mu >= 0, fa_el >= 0
+        pt_mu, pt_el = mu.take("pt", imu), el.take("pt", iel)
+        one_an = a_mu ^ a_el
+        with np.errstate(invalid="ignore"):
+            is_mu = has_mu & np.where(one_an, a_mu, ~has_el | (pt_mu >= pt_el))
+            is_el = has_el & np.where(one_an, a_el, ~has_mu | (pt_el > pt_mu))
+    out["n_lep_tight"] = n_mu_t + n_el_t
     lep = {}
     for k in ("pt", "eta", "phi", "charge"):
         lep[k] = np.where(is_mu, mu.take(k, imu), np.where(is_el, el.take(k, iel), np.nan))
@@ -300,6 +364,15 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     for k, v in lep.items():
         out["lep_" + k] = v
     out["n_veto_mu"], out["n_veto_el"] = n_mu_v, n_el_v
+    # isolation and the "an" ID+iso decision of the chosen lepton (mu: tightId and relIso04 < "an" cut;
+    # el: the "an" MVA WP), for offline iso cuts / sidebands
+    out["lep_reliso"] = np.where(is_mu, mu.take("pfRelIso04_all", imu),
+                                 np.where(is_el, el.take("pfRelIso03_all", iel) if "pfRelIso03_all" in el
+                                          else np.full(n, np.nan), np.nan))
+    with np.errstate(invalid="ignore"):
+        mu_isoid = mu["tightId"].astype(bool) & (mu["pfRelIso04_all"] < ca["mu_max_reliso"])
+    el_isoid = el[AN_EL_ID].astype(bool) if AN_EL_ID in el else np.zeros(len(el.evt), bool)
+    out["lep_id_iso"] = np.where(is_mu, mu.take_bool(mu_isoid, imu), np.where(is_el, el.take_bool(el_isoid, iel), False))
 
     # MET
     met, met_phi = np.asarray(ev["MET_pt"], np.float64), np.asarray(ev["MET_phi"], np.float64)
@@ -308,13 +381,21 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     wy = lep["pt"] * np.sin(lep["phi"]) + met * np.sin(met_phi)
     out["lepW_pt"] = np.hypot(wx, wy)
 
-    # probe: the only counted AK8 jet, and it must qualify (AOJ jet, mSD)
+    # probe: the leading qualifying jet (AOJ jet, mSD; skim: away from the lepton), with at most max_n_ak8
+    # counted AK8 jets ("an": the only counted AK8 jet)
     aoj_jet, counted, cand = probe_candidates(fj, c)
     out["n_aoj_jets"] = fj.count(aoj_jet)
     out["n_ak8"] = fj.count(counted)
+    if c["probe_min_dr_lep"] > 0:
+        fe = fj.evt
+        with np.errstate(invalid="ignore"):
+            cand = cand & (delta_r(fj["eta"], fj["phi"], lep["eta"][fe], lep["phi"][fe]) > c["probe_min_dr_lep"])
     ip = fj.first(cand)
-    probe_ok = (out["n_ak8"] == 1) & (ip >= 0)
+    probe_ok = (out["n_ak8"] >= 1) & (out["n_ak8"] <= c["max_n_ak8"]) & (ip >= 0)
     ip = np.where(probe_ok, ip, fj.first(counted))         # otherwise: the leading counted jet, for bookkeeping
+    other = np.abs(fj["eta"]) < c["fj_max_abs_eta"]        # leading other AK8 jet (any pt): offline veto scans
+    other[ip[ip >= 0]] = False
+    out["ak8_other_pt"] = fj.take("pt", fj.first(other))
     out["probe_idx"] = fj.local(ip)
     p_eta, p_phi = fj.take("eta", ip), fj.take("phi", ip)
     out["probe_pt"], out["probe_eta"], out["probe_phi"] = fj.take("pt", ip), p_eta, p_phi
@@ -470,15 +551,21 @@ def gen_truth(gen, probe_eta, probe_phi, dr=TRUTH_DR):
     return out
 
 
+OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all"]}   # read when present (NaN otherwise); only the skim cuts on it
+
+
 def branches(era=DEFAULT_ERA, cuts=None, is_mc=False):
     """Branches the selection reads: (scalars, {collection: [columns]})."""
     c = merged_cuts(cuts)
     T = ERAS[era]["triggers"][c["trigger_set"]]
-    scalars = (["run", "luminosityBlock", "event", "MET_pt", "MET_phi"] + T["mu"] + T["el"]
+    T_an = ERAS[era]["triggers"]["an"]
+    paths = T["mu"] + T["el"] + [p for p in T_an["mu"] + T_an["el"] if p not in T["mu"] + T["el"]]
+    scalars = (["run", "luminosityBlock", "event", "MET_pt", "MET_phi"] + paths
                + aoj.AOJ_TRIGGERS + aoj.AOJ_FILTERS + (["genWeight"] if is_mc else []))
+    el_ids = [c["el_id"]] + ([AN_EL_ID] if AN_EL_ID != c["el_id"] else [])
     colls = {
         "Muon": ["pt", "eta", "phi", "charge", "tightId", "looseId", "pfRelIso04_all"],
-        "Electron": ["pt", "eta", "phi", "charge", "deltaEtaSC", "cutBased", c["el_id"]],
+        "Electron": ["pt", "eta", "phi", "charge", "deltaEtaSC", "cutBased"] + el_ids + ["pfRelIso03_all"],
         "Jet": ["pt", "eta", "phi", "jetId", "btagDeepFlavB"],
         "FatJet": ["pt", "eta", "phi", "msoftdrop", "jetId"] + FATJET_TAGGING,
     }

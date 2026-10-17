@@ -43,7 +43,10 @@ PF_COLS = ["pt", "eta", "phi", "mass", "d0", "d0Err", "dz", "dzErr", "charge", "
 TAG_COLUMNS = ["channel", "stage", "lep_pdgId", "lep_pt", "lep_eta", "lep_phi", "lep_charge", "met_pt", "met_phi",
                "lepW_pt", "dphi_lep_probe", "dr_lep_probe", "n_aoj_jets", "n_ak8", "probe_idx", "tau32", "tau21",
                "pass_tau32", "n_b", "b_pt", "b_eta", "b_phi", "b_score", "b_dr_probe", "b_dr_lep",
-               "trig_mu", "trig_el", "trig_jetht"]
+               "trig_mu", "trig_el", "trig_jetht",
+               # appended in v2 (the "skim" preset's offline variables; filled for every preset)
+               "lep_reliso", "lep_id_iso", "an_channel", "n_lep_tight", "n_veto_mu", "n_veto_el", "ak8_other_pt",
+               "trig_mu_an", "trig_el_an"]
 TRUTH_COLUMNS = ["category", "had_top_pt", "had_top_dr", "n_had_W", "n_lep_W", "lep_flav"]
 
 
@@ -89,7 +92,10 @@ class Reader(object):
                     continue
                 raise RuntimeError("collection %s missing" % name)
             have = [c for c in cols if name + "_" + c in self.keys]
-            miss = [c for c in cols if c not in have]
+            opt = [c for c in cols if c not in have and c in ts.OPTIONAL_COLUMNS.get(name, [])]
+            if opt:
+                warn("%s columns absent, NaN: %s" % (name, ", ".join(opt)))
+            miss = [c for c in cols if c not in have and c not in opt]
             if miss:
                 if name == "FatJet" and all(c in ts.FATJET_TAGGING for c in miss) and not (set(miss) & {"tau2", "tau3"}):
                     warn("FatJet columns absent, stored as NaN: %s" % ", ".join(miss))
@@ -157,7 +163,7 @@ def parse_args(argv=None):
     p.add_argument("--trigger", default="lepton", choices=ts.TRIGGER_MODES)
     p.add_argument("--store", default="btag", choices=ts.CUTFLOW[1:], help="store events that passed up to this cut")
     p.add_argument("--preset", default="an", choices=sorted(ts.PRESETS),
-                   help="cut set: an = HIG-24-010 implementation (default), paper = as worded in the paper")
+                   help="cut set: an = HIG-24-010 implementation (default), paper = as worded in the paper, skim = loose superset for offline cuts")
     p.add_argument("--set", nargs="*", default=[], metavar="CUT=VALUE", help="override a cut of the preset")
     p.add_argument("--no-pf", action="store_true", help="do not read/write PF candidates")
     p.add_argument("--step", default="200 MB", help="uproot step_size (entries or size)")
@@ -251,7 +257,13 @@ def main(argv=None):
         d.attrs["columns"] = ",".join(TAG_COLUMNS)
         d.attrs["doc"] = ("channel 1 = mu, 2 = el; stage = cuts passed in that channel (index in cutflow stages; "
                           "the last one = tau32); n_ak8 = AK8 jets counted for the one-probe requirement; lep_* = the tight lepton; lepW_pt = |pT(lep) + MET|; probe_idx = "
-                          "FatJet index; n_b / b_* = b-tagged AK4 jets separated from probe and lepton (b_* = leading)")
+                          "FatJet index; n_b / b_* = b-tagged AK4 jets separated from probe and lepton (b_* = leading); "
+                          "lep_reliso = pfRelIso04_all (mu) / pfRelIso03_all (el); lep_id_iso = the lepton passes the 'an' "
+                          "ID+iso (mu tightId & relIso < 0.15, el mvaFall17V2Iso_WP80); an_channel = channel under the 'an' "
+                          "lepton selection (0 = fails it); n_lep_tight = tight leptons of this preset (mu + el); n_veto_* = "
+                          "veto leptons of this preset; ak8_other_pt = leading other AK8 jet with |eta| < 2.5 (any pt, NaN if "
+                          "none); trig_*_an = the 'an' lepton paths. 'an' offline from a skim: an_channel == channel, "
+                          "trig_mu_an / trig_el_an, met_pt > 50, n_ak8 == 1")
         if is_mc:
             out.create_dataset("gen_weight", data=cat("gen_weight", (), np.float64))
             if has_truth:

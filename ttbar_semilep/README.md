@@ -28,6 +28,19 @@ veto is raised from 160 to 300 GeV, the AOJ probe threshold: ~3x the events at t
 dR > 0.8 / 0.4 for "well separated", triggers IsoMu24/IsoTkMu24/Mu50/TkMu50 and Ele27/Ele115); this was
 the default before 2026-10-13 (`rnd/out_v1_paper`, `rnd/purity_v1_paper.txt`).
 
+`--preset skim` = a loose superset for offline cuts (more statistics, and an anti-isolated sideband for a
+data-driven QCD estimate): the "an" OR the high-pT lepton paths (IsoMu24/IsoTkMu24/Mu50/TkMu50,
+Ele27/Ele32_WPTight/Ele115), a tight-ID lepton with pT > 30 and relIso < 1 (electrons: no-iso MVA WP80 and
+pfRelIso03 < 1), no extra-lepton veto, MET > 20, any number of AK8 jets above 300 (probe = the leading AOJ
+jet with dR(lepton) > 0.8); dphi / btag / tau32 as in "an". The tag lepton is the "an"-tight one whenever
+the event has one, so "an" is recovered exactly offline: `an_channel == channel`, the "an" trigger bits
+(`trig_mu_an` / `trig_el_an`, or `trig_jetht` with `--trigger lepton_or_jetht`), `met_pt > 50`,
+`n_ak8 == 1` (checked on 20k TTToSemiLeptonic events: the same 110 events from the dphi stage on, with
+identical values). On those events it keeps ~3x the "an" rows at every stage. Every preset also writes the
+columns `lep_reliso`, `lep_id_iso`, `an_channel`, `n_lep_tight`, `n_veto_mu`, `n_veto_el`, `ak8_other_pt`
+(leading other AK8 jet, any pt: offline veto scans), `trig_mu_an`, `trig_el_an` (appended to `ttbar_tag`;
+the first 28 columns and all other datasets are unchanged).
+
 Scale factors (POG correctionlib files, `/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/`,
 2016postVFP_UL): muon trigger SFs exist for `IsoMu24_or_IsoTkMu24` (denominator: tight ID + tight PF iso, i.e.
 this tag muon; binned in |eta| 0–2.4 and pT 26–inf, ~0.95–0.99 above 55 GeV, with stat/syst variations: weight

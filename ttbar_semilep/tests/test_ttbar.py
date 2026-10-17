@@ -56,7 +56,7 @@ def heavy():
 # =============================================================================== toy events
 MU_COLS = {"pt": 0., "eta": 0., "phi": 0., "charge": -1, "tightId": True, "looseId": True, "pfRelIso04_all": 0.}
 EL_COLS = {"pt": 0., "eta": 0., "phi": 0., "charge": -1, "deltaEtaSC": 0., "cutBased": 4,
-           "mvaFall17V2Iso_WP80": True}
+           "mvaFall17V2Iso_WP80": True, "mvaFall17V2noIso_WP80": True, "pfRelIso03_all": 0.}
 JET_COLS = {"pt": 0., "eta": 0., "phi": 0., "jetId": 6, "btagDeepFlavB": 0.}
 FJ_COLS = dict({"pt": 0., "eta": 0., "phi": 0., "msoftdrop": 0., "jetId": 6},
                **dict((k, 0.) for k in ts.FATJET_TAGGING))
@@ -268,6 +268,62 @@ def test_toy_probe_choice_and_electron_channel():
     assert smu[0] == ALL and s["probe_idx"][0] == 1 and s["n_aoj_jets"][0] == 1 and s["n_ak8"][0] == 1
     assert sel == [0, ALL, ALL, S["filters_json"], S["filters_json"], 0, 0, S["filters_json"]], sel
     assert s["channel"].tolist() == [1, 2, 2, 0, 0, 2, 2, 0] and s["lep_pdgId"][1] == -11
+
+
+def test_toy_skim_preset():
+    """"skim": each loosened cut vs "an", the tag lepton / probe choice, and the "an" decision kept in an_channel."""
+    b = base_mu()
+    far = dict(pt=310., eta=1., phi=-1., msoftdrop=60.)
+    noniso_el = dict(pt=60., eta=0.5, phi=0., charge=1, mvaFall17V2Iso_WP80=False, pfRelIso03_all=0.4)
+    cases = [  # (name, event, "an" stage, "skim" stage, an_channel)
+        ("pass", b, ALL, ALL, 1),
+        ("muon relIso 0.5", mod(b, "Muon", 0, pfRelIso04_all=0.5), S["filters_json"], ALL, 0),
+        ("muon relIso 1.1", mod(b, "Muon", 0, pfRelIso04_all=1.1), S["filters_json"], S["filters_json"], 0),
+        ("muon pt 35", mod(b, "Muon", 0, pt=35.), S["filters_json"], ALL, 0),
+        ("muon pt 25", mod(b, "Muon", 0, pt=25.), S["filters_json"], S["filters_json"], 0),
+        ("MET 30", dict(b, met=30.), S["one_lepton"], ALL, 1),
+        ("MET 15", dict(b, met=15.), S["one_lepton"], S["one_lepton"], 1),
+        ("second AK8 pt 310", dict(b, FatJet=b["FatJet"] + [far]), S["met"], ALL, 1),
+        ("extra non-iso tight muon pt 80", dict(b, Muon=b["Muon"] + [dict(pt=80., eta=1., phi=-2., pfRelIso04_all=0.5)]),
+         ALL, ALL, 1),
+        ("leading AK8 around the muon", dict(b, FatJet=[dict(pt=500., eta=0.5, phi=0.1, msoftdrop=40.)] + b["FatJet"]),
+         S["met"], ALL, 1),
+        ("Mu50 only, non-iso muon", dict(mod(b, "Muon", 0, pfRelIso04_all=0.5), hlt=["HLT_Mu50"]), 0, ALL, 0),
+        ("muon + non-WP80 electron pt 90", dict(b, Electron=[dict(noniso_el, pt=90., eta=1., phi=-2.)]),
+         S["filters_json"], ALL, 0),
+    ]
+    sk = ts.merged_cuts(None, "skim")
+    s_sk, sk_mu, _ = stages([c[1] for c in cases], cuts=sk)
+    s_an, an_mu, _ = stages([c[1] for c in cases])
+    bad = [(c[0], a, k, c[2], c[3]) for c, a, k in zip(cases, an_mu, sk_mu) if (a, k) != (c[2], c[3])]
+    assert not bad, bad
+    assert s_sk["an_channel"].tolist() == [c[4] for c in cases], s_sk["an_channel"].tolist()
+    assert s_sk["an_channel"].tolist() == s_an["an_channel"].tolist()          # the same decision in both presets
+    assert s_an["an_channel"].tolist() == [1 if st >= S["one_lepton"] else 0 for st in an_mu]
+    i = dict((c[0], k) for k, c in enumerate(cases))
+    assert abs(s_sk["lep_reliso"][i["muon relIso 0.5"]] - 0.5) < 1e-9 and not s_sk["lep_id_iso"][i["muon relIso 0.5"]]
+    assert s_sk["lep_id_iso"][i["pass"]] and s_sk["n_lep_tight"][i["pass"]] == 1
+    k = i["extra non-iso tight muon pt 80"]                    # the "an"-tight muon stays the tag, not the harder one
+    assert s_sk["lep_pt"][k] == 60. and s_sk["n_lep_tight"][k] == 2 and s_an["n_lep_tight"][k] == 1
+    k = i["second AK8 pt 310"]
+    assert s_sk["n_ak8"][k] == 2 and s_sk["probe_idx"][k] == 0 and abs(s_sk["ak8_other_pt"][k] - 310.) < 1e-9
+    assert np.isnan(s_sk["ak8_other_pt"][i["pass"]])
+    assert s_sk["probe_idx"][i["leading AK8 around the muon"]] == 1        # dR(mu) 0.1 < 0.8: not the probe
+    k = i["Mu50 only, non-iso muon"]
+    assert s_sk["trig_mu"][k] and not s_sk["trig_mu_an"][k] and s_an["trig_mu_an"][i["pass"]]
+    # electron channel: no-iso WP80 + relIso03 < 1 in the skim, the iso WP80 in "an"
+    el = dict(b, hlt=[EL_TRIG], Muon=[], Electron=[noniso_el])
+    el_iso = mod(el, "Electron", 0, mvaFall17V2Iso_WP80=True, pfRelIso03_all=0.05)
+    el_loose = mod(el, "Electron", 0, pfRelIso03_all=1.2)
+    s2, _, sk_el = stages([el, el_iso, el_loose], cuts=sk)
+    _, _, an_el = stages([el, el_iso, el_loose])
+    assert sk_el == [ALL, ALL, S["filters_json"]] and an_el == [S["filters_json"], ALL, S["filters_json"]], (sk_el, an_el)
+    assert s2["channel"].tolist() == [2, 2, 0] and s2["an_channel"].tolist() == [0, 2, 0]
+    assert abs(s2["lep_reliso"][0] - 0.4) < 1e-9 and s2["lep_id_iso"].tolist() == [False, True, False]
+    # the skim trigger set = the "an" paths + the high-pt ones
+    T = ts.ERAS["2016postVFP"]["triggers"]
+    assert T["skim"]["mu"] == ["HLT_IsoMu24", "HLT_IsoTkMu24", "HLT_Mu50", "HLT_TkMu50"]
+    assert T["skim"]["el"] == ["HLT_Ele27_WPTight_Gsf", "HLT_Ele32_WPTight_Gsf", "HLT_Ele115_CaloIdVT_GsfTrkIdT"]
 
 
 def test_toy_trigger_modes_json_and_eras():
