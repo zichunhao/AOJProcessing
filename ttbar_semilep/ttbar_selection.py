@@ -69,6 +69,10 @@ for _e in ERAS.values():         # "skim" = the union of the "an" and the "paper
     _t = _e["triggers"]
     _t["skim"] = dict((ch, _t["an"][ch] + [p for p in _t["paper"][ch] if p not in _t["an"][ch]]) for ch in ("mu", "el"))
 DEFAULT_ERA = "2016postVFP"      # Run2016G + Run2016H (the AOJ eras)
+# Single-lepton paths stored one bit each in trig_bits (bit k = TRIG_BITS[k]; absent paths = 0), for
+# offline trigger choices / trigger-efficiency studies.  2016 names; the other eras' paths are not bits.
+TRIG_BITS = ["HLT_IsoMu24", "HLT_IsoTkMu24", "HLT_Mu50", "HLT_TkMu50", "HLT_Ele27_WPTight_Gsf",
+             "HLT_Ele32_WPTight_Gsf", "HLT_Ele115_CaloIdVT_GsfTrkIdT", "HLT_Photon175"]
 
 DEFAULT_CUTS = {                 # == PRESETS["an"]
     "trigger_set": "an",
@@ -424,6 +428,8 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     out["b_dr_probe"] = delta_r(out["b_eta"], out["b_phi"], p_eta, p_phi)
     out["b_dr_lep"] = delta_r(out["b_eta"], out["b_phi"], lep["eta"], lep["phi"])
 
+    extra_outputs(ev, out, c, wp, lep, is_mu, is_el, imu, iel, ip)
+
     # cut flow
     with np.errstate(invalid="ignore"):
         met_ok = met > c["met_min"]
@@ -438,6 +444,92 @@ def select(ev, era=DEFAULT_ERA, cuts=None, trigger="lepton", lumimask=None):
     out["selected"] = (out["stage_mu"] == last) | (out["stage_el"] == last)
     out["stage"] = np.maximum(out["stage_mu"], out["stage_el"])       # channel-exclusive from one_lepton on
     return out
+
+
+def _col(coll, name):
+    """Flat column as float64, NaN where the input does not have it (OPTIONAL_COLUMNS)."""
+    return coll[name].astype(np.float64) if name in coll else np.full(len(coll.evt), np.nan)
+
+
+def _at(v, g):
+    """v[g] per event, NaN where g < 0 (g = global rows; v may be empty)."""
+    out = np.full(len(g), np.nan)
+    ok = g >= 0
+    if ok.any():
+        out[ok] = v[g[ok]]
+    return out
+
+
+def _scalar(ev, name, n):
+    return np.asarray(ev[name], np.float64) if name in ev else np.full(n, np.nan)
+
+
+def extra_outputs(ev, out, c, wp, lep, is_mu, is_el, imu, iel, ip):
+    """v3 bookkeeping outputs for offline cuts and corrections (nothing here is cut on).  Inputs the
+    file does not have give NaN (Pileup_* and Jet_hadronFlavour in data, SubJet if absent, ...).
+    imu / iel / ip = global rows of the chosen muon / electron / probe (-1 = none)."""
+    mu, el, jet, fj = ev["Muon"], ev["Electron"], ev["Jet"], ev["FatJet"]
+    n = mu.n
+    bits = np.zeros(n, dtype=np.int64)
+    for k, path in enumerate(TRIG_BITS):
+        if path in ev:
+            bits |= np.asarray(ev[path]).astype(np.int64) << k
+    out["trig_bits"] = bits
+    out["npv_good"] = _scalar(ev, "PV_npvsGood", n)
+    out["pu_ntrueint"] = _scalar(ev, "Pileup_nTrueInt", n)
+    out["puppimet_pt"], out["puppimet_phi"] = _scalar(ev, "PuppiMET_pt", n), _scalar(ev, "PuppiMET_phi", n)
+
+    # tag lepton: supercluster eta (el; mu: eta), impact parameters, mini-isolation
+    def pick(vm, ve):
+        return np.where(is_mu, _at(vm, imu), np.where(is_el, _at(ve, iel), np.nan))
+    out["lep_sc_eta"] = pick(_col(mu, "eta"), _col(el, "eta") + _col(el, "deltaEtaSC"))
+    for k, col in (("lep_dxy", "dxy"), ("lep_dz", "dz"), ("lep_miniiso", "miniPFRelIso_all")):
+        out[k] = pick(_col(mu, col), _col(el, col))
+
+    # AK4 jets with tight ID, pT > 30, |eta| < 2.4, dR(tag lepton) > 0.4 (none removed without a lepton):
+    # multiplicity, HT, medium b tags; hadron flavour of the leading separated b jet (MC)
+    je = jet.evt
+    dr_l = delta_r(jet["eta"], jet["phi"], lep["eta"][je], lep["phi"][je])
+    with np.errstate(invalid="ignore"):
+        j30 = ((jet["pt"] > 30) & (np.abs(jet["eta"]) < 2.4) & ((jet["jetId"].astype(np.int64) & 2) != 0)
+               & ~(dr_l < 0.4))
+    out["n_jet"] = jet.count(j30)
+    out["ht"] = np.bincount(je[j30], weights=jet["pt"][j30], minlength=n)
+    out["n_b_all"] = jet.count(j30 & (jet["btagDeepFlavB"] > wp))
+    bl = np.asarray(out["b_idx"], np.int64)
+    out["b_hflav"] = _at(_col(jet, "hadronFlavour"), np.where(bl >= 0, jet.offsets[:-1] + bl, -1))
+
+    # 2D-isolation inputs: the AK4 jet nearest to the lepton among pT > 15, |eta| < 2.4 (dR, and the
+    # lepton momentum transverse to that jet's axis)
+    key = np.where((jet["pt"] > 15) & (np.abs(jet["eta"]) < 2.4) & np.isfinite(dr_l), dr_l, np.inf)
+    nearest = np.full(n, -1, dtype=np.int64)
+    if len(key):
+        o = np.lexsort((key, je))
+        evs, pos = np.unique(je[o], return_index=True)
+        cand = o[pos]
+        good = np.isfinite(key[cand])
+        nearest[evs[good]] = cand[good]
+    out["lep_jet_dr"] = _at(key, nearest)
+    jpt, jeta, jphi = _at(jet["pt"], nearest), _at(jet["eta"], nearest), _at(jet["phi"], nearest)
+    jx, jy, jz = jpt * np.cos(jphi), jpt * np.sin(jphi), jpt * np.sinh(jeta)
+    lx, ly, lz = lep["pt"] * np.cos(lep["phi"]), lep["pt"] * np.sin(lep["phi"]), lep["pt"] * np.sinh(lep["eta"])
+    cx, cy, cz = ly * jz - lz * jy, lz * jx - lx * jz, lx * jy - ly * jx
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out["lep_jet_ptrel"] = np.sqrt(cx * cx + cy * cy + cz * cz) / np.sqrt(jx * jx + jy * jy + jz * jz)
+
+    # probe: ungroomed mass, N3, DeepAK8 top scores, the larger subjet DeepCSV score
+    for k, col in (("probe_mass", "mass"), ("probe_n3b1", "n3b1"), ("probe_deepTag_TvsQCD", "deepTag_TvsQCD"),
+                   ("probe_deepTagMD_TvsQCD", "deepTagMD_TvsQCD")):
+        out[k] = _at(_col(fj, col), ip)
+    sjb = np.full(n, np.nan)
+    sj = ev.get("SubJet")
+    if sj is not None and "btagDeepB" in sj and "subJetIdx1" in fj:
+        for col in ("subJetIdx1", "subJetIdx2"):
+            loc = np.nan_to_num(_at(_col(fj, col), ip), nan=-1).astype(np.int64)
+            ok = (loc >= 0) & (loc < sj.counts)
+            with np.errstate(invalid="ignore"):
+                sjb = np.fmax(sjb, _at(_col(sj, "btagDeepB"), np.where(ok, sj.offsets[:-1] + loc, -1)))
+    out["probe_sj_btag"] = sjb
 
 
 def cutflow(sel, weights=None):
@@ -548,10 +640,26 @@ def gen_truth(gen, probe_eta, probe_phi, dr=TRUTH_DR):
         ev_l, pos = np.unique(gen.evt[li], return_index=True)
         flav[ev_l] = absp[li[pos]]
     out["lep_flav"] = flav
+    # last-copy top / antitop pT (top-pT reweighting); NaN without statusFlags or tops
+    for k, sign in (("gen_top_pt", 6), ("gen_antitop_pt", -6)):
+        v = np.full(n, np.nan)
+        if "statusFlags" in gen:
+            last = (pdg == sign) & ((gen["statusFlags"].astype(np.int64) >> 13) & 1).astype(bool)
+            i = gen.first(last)
+            v = gen.take("pt", i)
+        out[k] = v
     return out
 
 
-OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all"]}   # read when present (NaN otherwise); only the skim cuts on it
+# read when present (NaN otherwise): only the skim cuts on Electron_pfRelIso03_all; the rest are v3 bookkeeping
+OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all", "dxy", "dz", "miniPFRelIso_all"],
+                    "Muon": ["dxy", "dz", "miniPFRelIso_all"],
+                    "Jet": ["hadronFlavour"],
+                    "FatJet": ["mass", "n3b1", "deepTag_TvsQCD", "deepTagMD_TvsQCD", "subJetIdx1", "subJetIdx2"],
+                    "SubJet": ["btagDeepB"],
+                    "GenPart": ["statusFlags"]}
+OPTIONAL_COLLECTIONS = ["GenPart", "SubJet"]           # absent collection: warn and go on
+OPTIONAL_SCALARS = ["PV_npvsGood", "Pileup_nTrueInt", "PuppiMET_pt", "PuppiMET_phi"] + TRIG_BITS
 
 
 def branches(era=DEFAULT_ERA, cuts=None, is_mc=False):
@@ -562,13 +670,18 @@ def branches(era=DEFAULT_ERA, cuts=None, is_mc=False):
     paths = T["mu"] + T["el"] + [p for p in T_an["mu"] + T_an["el"] if p not in T["mu"] + T["el"]]
     scalars = (["run", "luminosityBlock", "event", "MET_pt", "MET_phi"] + paths
                + aoj.AOJ_TRIGGERS + aoj.AOJ_FILTERS + (["genWeight"] if is_mc else []))
+    scalars += [b for b in OPTIONAL_SCALARS if b not in scalars]
     el_ids = [c["el_id"]] + ([AN_EL_ID] if AN_EL_ID != c["el_id"] else [])
     colls = {
         "Muon": ["pt", "eta", "phi", "charge", "tightId", "looseId", "pfRelIso04_all"],
-        "Electron": ["pt", "eta", "phi", "charge", "deltaEtaSC", "cutBased"] + el_ids + ["pfRelIso03_all"],
+        "Electron": ["pt", "eta", "phi", "charge", "deltaEtaSC", "cutBased"] + el_ids,
         "Jet": ["pt", "eta", "phi", "jetId", "btagDeepFlavB"],
         "FatJet": ["pt", "eta", "phi", "msoftdrop", "jetId"] + FATJET_TAGGING,
+        "SubJet": [],
     }
     if is_mc:
         colls["GenPart"] = ["pt", "eta", "phi", "pdgId", "genPartIdxMother"]
+    for name, cols in OPTIONAL_COLUMNS.items():
+        if name in colls:
+            colls[name] += [x for x in cols if x not in colls[name]]
     return scalars, colls

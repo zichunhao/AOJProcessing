@@ -46,8 +46,14 @@ TAG_COLUMNS = ["channel", "stage", "lep_pdgId", "lep_pt", "lep_eta", "lep_phi", 
                "trig_mu", "trig_el", "trig_jetht",
                # appended in v2 (the "skim" preset's offline variables; filled for every preset)
                "lep_reliso", "lep_id_iso", "an_channel", "n_lep_tight", "n_veto_mu", "n_veto_el", "ak8_other_pt",
-               "trig_mu_an", "trig_el_an"]
-TRUTH_COLUMNS = ["category", "had_top_pt", "had_top_dr", "n_had_W", "n_lep_W", "lep_flav"]
+               "trig_mu_an", "trig_el_an",
+               # appended in v3 (bookkeeping for offline cuts / corrections; NaN where the input lacks the branch)
+               "trig_bits", "npv_good", "pu_ntrueint", "puppimet_pt", "puppimet_phi", "lep_sc_eta", "lep_dxy",
+               "lep_dz", "lep_miniiso", "lep_jet_dr", "lep_jet_ptrel", "n_jet", "ht", "n_b_all", "b_hflav",
+               "probe_mass", "probe_n3b1", "probe_deepTag_TvsQCD", "probe_deepTagMD_TvsQCD", "probe_sj_btag"]
+TRUTH_COLUMNS = ["category", "had_top_pt", "had_top_dr", "n_had_W", "n_lep_W", "lep_flav",
+                 "gen_top_pt", "gen_antitop_pt"]       # v3: last-copy t / tbar pT
+FORMAT_VERSION = 3                                     # ttbar_tag / truth column set (attrs["format_version"])
 
 
 class Warner(object):
@@ -89,6 +95,9 @@ class Reader(object):
             if "n" + name not in self.keys:
                 if name == "GenPart":
                     warn("no GenPart in the input: MC truth not available")
+                    continue
+                if name in ts.OPTIONAL_COLLECTIONS:
+                    warn("no %s in the input: its outputs are NaN" % name)
                     continue
                 raise RuntimeError("collection %s missing" % name)
             have = [c for c in cols if name + "_" + c in self.keys]
@@ -263,14 +272,23 @@ def main(argv=None):
                           "lepton selection (0 = fails it); n_lep_tight = tight leptons of this preset (mu + el); n_veto_* = "
                           "veto leptons of this preset; ak8_other_pt = leading other AK8 jet with |eta| < 2.5 (any pt, NaN if "
                           "none); trig_*_an = the 'an' lepton paths. 'an' offline from a skim: an_channel == channel, "
-                          "trig_mu_an / trig_el_an, met_pt > 50, n_ak8 == 1")
+                          "trig_mu_an / trig_el_an, met_pt > 50, n_ak8 == 1. v3: trig_bits = bit k set if "
+                          "TRIG_BITS[k] fired (attrs trig_bits); npv_good = PV_npvsGood; pu_ntrueint = Pileup_nTrueInt "
+                          "(MC); puppimet_* = PuppiMET; lep_sc_eta = supercluster eta (el) / eta (mu); lep_dxy, lep_dz; "
+                          "lep_miniiso = miniPFRelIso_all; lep_jet_dr / lep_jet_ptrel = dR to and pT relative to the "
+                          "nearest AK4 jet with pT > 15, |eta| < 2.4 (2D isolation); n_jet / ht / n_b_all = AK4 jets "
+                          "with tight ID, pT > 30, |eta| < 2.4, dR(lepton) > 0.4 (n_b_all: medium DeepJet, no probe "
+                          "separation); b_hflav = hadronFlavour of the leading b_* jet (MC); probe_mass = ungroomed "
+                          "mass; probe_n3b1; probe_deepTag(MD)_TvsQCD = DeepAK8; probe_sj_btag = max SubJet "
+                          "btagDeepB of the probe's two subjets")
+        d.attrs["trig_bits"] = ",".join(ts.TRIG_BITS)
         if is_mc:
             out.create_dataset("gen_weight", data=cat("gen_weight", (), np.float64))
             if has_truth:
                 d = out.create_dataset("truth", data=cat("truth", (len(TRUTH_COLUMNS),), np.float32))
                 d.attrs["columns"] = ",".join(TRUTH_COLUMNS)
                 d.attrs["categories"] = ",".join(ts.TRUTH_CATEGORIES)
-                d.attrs["doc"] = ("category: partons of a hadronic W (+ its top's b) within dR < %.1f of the probe: "
+                d.attrs["doc"] = ("category: partons of a hadronic W (+ its top's b) within dR < %.1f of the probe (gen_top_pt / gen_antitop_pt: last-copy t / tbar pT, NaN without GenPart_statusFlags): "
                                   "0 other, 1 b+q, 2 W (q,q'), 3 t (b,q,q')" % ts.TRUTH_DR)
         g = out.create_group("cutflow")
         g.create_dataset("n", data=cf_n.astype(np.int64))
@@ -281,6 +299,7 @@ def main(argv=None):
                                              "cuts": cuts, "json": os.path.basename(args.json) if args.json else None,
                                              "sample_type": args.sample_type})
         out.attrs["n_entries"] = n_entries
+        out.attrs["format_version"] = FORMAT_VERSION
         out.attrs["sum_genweight"] = sumw if is_mc else float("nan")
         out.attrs["inputs"] = json.dumps(args.input)
         out.attrs["producer"] = PRODUCER
