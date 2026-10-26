@@ -254,8 +254,10 @@ class Writer(object):
     COLS = {"PFCands": PF_COLS, "jet_kinematics": JK_COLS, "jet_tagging": JT_COLS,
             "event_info": ["run", "luminosityBlock", "event"], "gen_info": GEN_COLS}
 
-    def __init__(self, outdir, prefix, per, attrs):
+    def __init__(self, outdir, prefix, per, attrs, cols=None, names=None):
         self.dir, self.prefix, self.per, self.attrs = outdir, prefix, per, attrs
+        self.cols = dict(self.COLS, **(cols or {}))     # dataset -> column names (the `columns` attribute)
+        self.names = names or SAMPLES                   # names of the `sample` codes
         os.makedirs(outdir, exist_ok=True)
         self.idx, self.f, self.n, self.total = -1, None, 0, 0
 
@@ -272,10 +274,10 @@ class Writer(object):
         chunk = (128,) + a.shape[1:] if a.ndim == 3 else (8192,) + a.shape[1:]
         d = self.f.create_dataset(k, shape=(0,) + a.shape[1:], maxshape=(None,) + a.shape[1:], dtype=a.dtype,
                                   chunks=chunk, compression="gzip")
-        if k in self.COLS:
-            d.attrs["columns"] = ",".join(self.COLS[k])
+        if k in self.cols:
+            d.attrs["columns"] = ",".join(self.cols[k])
         if k == "sample":
-            d.attrs["names"] = ",".join(SAMPLES)
+            d.attrs["names"] = ",".join(self.names)
         return d
 
     def write(self, batch):
