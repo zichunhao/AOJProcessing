@@ -5,7 +5,7 @@
 # Self-contained & site-agnostic. Everything it needs arrives via the job
 # environment (set by submit.sub from config.sh):
 #     STORE_XRD CMSSW_VERSION CMSSW_TARBALL SCRAM_ARCH NTHREADS
-#     optional: AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR AOJ_MAX_EVENTS (see below)
+#     optional: AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR TTBAR_PREFILTER AOJ_MAX_EVENTS (see below)
 # Args:  <dataset>  <chunkfile-basename>  <output.h5>
 #
 # Flow:  fetch CMSSW tarball (xrootd) -> cmsenv -> STAGE inputs to scratch
@@ -14,13 +14,18 @@
 #        over the WAN is latency-bound off-site (~10x slower); the big NanoAOD and
 #        the staged inputs never leave the worker scratch dir.
 #
-# Optional Stage 3, MC only: the semileptonic-ttbar tag-and-probe
+# Optional Stage 3: the semileptonic-ttbar tag-and-probe
 # (ttbar_semilep/ttbar_maker.py, see ttbar_semilep/LPC_PROMPT.md) on the same
 # NanoAOD, pushed to <STORE>/ttbar/tt_<chunk>.h5. Selected by AOJ_TTBAR:
 #   (unset)  jet-level only: the default, unchanged
-#   also     jet-level as above, then Stage 3; a Stage 3 failure only warns
-#            (the jet-level .h5 is already on the store)
-#   only     Stage 3 instead of H5_maker (no jet-level .h5); a failure holds the job
+#   also     MC only: jet-level as above, then Stage 3; a Stage 3 failure only
+#            warns (the jet-level .h5 is already on the store)
+#   only     Stage 3 instead of H5_maker (no jet-level .h5); a failure holds the
+#            job. MC or data (SingleMuon / SingleElectron: golden JSON). With
+#            TTBAR_PREFILTER=1 (config.sh's default for "only") Stage 1 runs
+#            ttbar_semilep/pfnano_ttskim.py, which writes only the events with a
+#            lepton (pT > 20) and an AK8 jet (pT > 200), looser than any preset;
+#            the MC normalisation (Runs/genEventSumw) still counts every event.
 # Its code is <STORE>/cmssw/${TTBAR_TARBALL} (pack_ttbar.sh), unpacked over the
 # CMSSW tarball's copy right after that tarball, before any staging, so a missing
 # or broken one holds the job at once. TTBAR_PRESET (set with TTBAR_SUBDIR by
@@ -42,20 +47,23 @@ WORK="$(pwd)"
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
 
-# data vs MC selection (QCD*, TT*, ST_*, WJets*, *_mc*, MC_* => MC). ttbar (TT*)
-# also gets the per-jet top_match label in gen_info (no jets are dropped).
+# data vs MC selection (QCD*, TT*, ST_*, WJets*, ZJets*, DY*, WW, WZ, ZZ, *_mc*, MC_* => MC; keep it in step
+# with the MC labels of ttbar_semilep/samples.py). ttbar (TT*) also gets the per-jet top_match label in
+# gen_info (no jets are dropped).
 H5OPTS=""
 case "$DATASET" in
-  QCD*|TT*|ST_*|WJets*|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
+  QCD*|TT*|ST_*|WJets*|ZJets*|DY*|WW|WZ|ZZ|*_mc*|MC_*) STYPE=MC;   CONFIG=pfnano_mc_2016UL_OpenData.py;   NANO=nano_mc2016post.root;;
   *)                               STYPE=data; CONFIG=pfnano_data_2016UL_OpenData.py; NANO=nano_data2016.root;;
 esac
 case "$DATASET" in TT*) H5OPTS="--top_label";; esac
 case "${AOJ_TTBAR:-}" in
   "") ;;
   also|only)
-    [ "$STYPE" = MC ] || { echo "FATAL: AOJ_TTBAR=${AOJ_TTBAR} is MC-only ($DATASET is data)"; exit 2; }
+    [ "$STYPE" = MC ] || [ "${AOJ_TTBAR}" = only ] || { echo "FATAL: AOJ_TTBAR=also is MC-only ($DATASET is data; use only)"; exit 2; }
     : "${TTBAR_TARBALL:=ttbar_semilep_v1.tar.gz}"
-    echo "ttbar stage: AOJ_TTBAR=${AOJ_TTBAR}  code=${STORE_XRD}/cmssw/${TTBAR_TARBALL}${TTBAR_PRESET:+  preset=${TTBAR_PRESET} -> ${TTBAR_SUBDIR}/}";;
+    : "${TTBAR_PREFILTER:=0}"
+    [ "${TTBAR_PREFILTER}" = 0 ] || [ "${AOJ_TTBAR}" = only ] || { echo "FATAL: TTBAR_PREFILTER=1 needs AOJ_TTBAR=only"; exit 2; }
+    echo "ttbar stage: AOJ_TTBAR=${AOJ_TTBAR}  code=${STORE_XRD}/cmssw/${TTBAR_TARBALL}${TTBAR_PRESET:+  preset=${TTBAR_PRESET}} -> ${TTBAR_SUBDIR:-ttbar}/  pre-filter=${TTBAR_PREFILTER}";;
   *) echo "FATAL: AOJ_TTBAR='${AOJ_TTBAR}' (expected unset, also or only)"; exit 2;;
 esac
 if [ -n "${AOJ_MAX_EVENTS:-}" ]; then echo "TEST RUN: AOJ_MAX_EVENTS=${AOJ_MAX_EVENTS}: only that many events per chunk"; fi
@@ -78,6 +86,9 @@ if [ -n "${AOJ_TTBAR:-}" ]; then
     echo "FATAL: cannot fetch/unpack ${TTBAR_TARBALL} (was condor/pack_ttbar.sh run for it?)"; exit 2
   fi
   rm -f "${WORK}/${TTBAR_TARBALL}"
+  if [ "${TTBAR_PREFILTER:-0}" = 1 ] && [ ! -f ttbar_semilep/pfnano_ttskim.py ]; then
+    echo "FATAL: TTBAR_PREFILTER=1 but ${TTBAR_TARBALL} has no ttbar_semilep/pfnano_ttskim.py"; exit 2
+  fi
 fi
 cp "${WORK}/${CHUNK}" ./remote_chunk.txt
 echo "=== input files ($(wc -l < remote_chunk.txt)) ==="; cat remote_chunk.txt
@@ -115,7 +126,12 @@ set +e
 # Thin the per-event log spam (~20 MB/job otherwise): keep every 10000th
 # "Begin processing" line; drop the MC-only Rivet HTXS warning (meaningless here).
 thin() { awk '/Begin processing the/ { if (++n % 10000) next } /HiggsTemplateCrossSections/ { next } { print; fflush() }'; }
-cmsRun "${CONFIG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}" ${AOJ_MAX_EVENTS:+maxEvents=${AOJ_MAX_EVENTS}} > >(thin) 2> >(thin >&2)
+CMSRUN_CFG="${CONFIG}"
+if [ "${TTBAR_PREFILTER:-0}" = 1 ]; then
+  export AOJ_TTSKIM_BASE="${CONFIG}"; CMSRUN_CFG=ttbar_semilep/pfnano_ttskim.py
+  echo "Stage 1 through the ttbar pre-filter: ${CMSRUN_CFG} on ${CONFIG}"
+fi
+cmsRun "${CMSRUN_CFG}" inputFiles_load=local_chunk.txt nThreads="${NTHREADS}" ${AOJ_MAX_EVENTS:+maxEvents=${AOJ_MAX_EVENTS}} > >(thin) 2> >(thin >&2)
 cmsrc=$?
 set -e
 if [ "${cmsrc}" -ne 0 ]; then
@@ -143,10 +159,11 @@ fi
 # Called as "ttbar_stage || ...", where set -e is off: every step returns explicitly.
 # py3env.sh runs python3 from the LCG_105a centos7 view, isolated from cmsenv.
 ttbar_stage() {
-  local tt="tt_${OUTNAME#out_}" sub="${TTBAR_SUBDIR:-ttbar}" pre=()
+  local tt="tt_${OUTNAME#out_}" sub="${TTBAR_SUBDIR:-ttbar}" pre=() typ=(--sample_type MC)
   [ -n "${TTBAR_PRESET:-}" ] && pre=(--preset "${TTBAR_PRESET}")
+  [ "$STYPE" = data ] && typ=(--sample_type data -j Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt)
   echo "===== Stage 3: ttbar_maker -> ${tt}  ($(date)) ====="
-  bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i "${NANO}" -o "${tt}" --sample_type MC \
+  bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i "${NANO}" -o "${tt}" "${typ[@]}" \
        --era 2016postVFP --trigger lepton_or_jetht --store one_probe "${pre[@]}" || return 1
   echo "===== Push ${tt} -> ${STORE_XRD}/${sub}/  ($(date)) ====="
   xrdcp -f "${tt}" "${STORE_XRD}/${sub}/${tt}" || return 1

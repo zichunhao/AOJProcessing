@@ -73,6 +73,10 @@ DEFAULT_ERA = "2016postVFP"      # Run2016G + Run2016H (the AOJ eras)
 # offline trigger choices / trigger-efficiency studies.  2016 names; the other eras' paths are not bits.
 TRIG_BITS = ["HLT_IsoMu24", "HLT_IsoTkMu24", "HLT_Mu50", "HLT_TkMu50", "HLT_Ele27_WPTight_Gsf",
              "HLT_Ele32_WPTight_Gsf", "HLT_Ele115_CaloIdVT_GsfTrkIdT", "HLT_Photon175"]
+# AK4 jets stored per event (output "ak4", shape (n, N_AK4, len(AK4_COLUMNS))) for b-tag event weights; the b-tag
+# SFs cover pT > 20, |eta| < 2.5 (UL16 DeepJet)
+AK4_COLUMNS = ["pt", "eta", "phi", "btagDeepFlavB", "hadronFlavour", "dr_probe", "dr_lep"]
+N_AK4, AK4_MIN_PT, AK4_MAX_ABS_ETA = 10, 20.0, 2.5
 
 DEFAULT_CUTS = {                 # == PRESETS["an"]
     "trigger_set": "an",
@@ -500,8 +504,29 @@ def extra_outputs(ev, out, c, wp, lep, is_mu, is_el, imu, iel, ip):
     out["b_hflav"] = _at(_col(jet, "hadronFlavour"), np.where(bl >= 0, jet.offsets[:-1] + bl, -1))
 
     # 2D-isolation inputs: the AK4 jet nearest to the lepton among pT > 15, |eta| < 2.4 (dR, and the
-    # lepton momentum transverse to that jet's axis)
-    key = np.where((jet["pt"] > 15) & (np.abs(jet["eta"]) < 2.4) & np.isfinite(dr_l), dr_l, np.inf)
+    # lepton momentum transverse to that jet's axis), after taking the lepton out of the jet that contains it
+    # (Muon_jetIdx / Electron_jetIdx): its momentum is subtracted from the raw jet, which is then scaled back by
+    # the jet's JEC (Jet_rawFactor). AK4 jets are clustered with the leptons in them, so without this the nearest
+    # jet is the lepton's own jet for ~98 % of isolated leptons (dR ~ 0, ptrel ~ 0).
+    pt_j = np.asarray(jet["pt"], np.float64)
+    jx, jy, jz = pt_j * np.cos(jet["phi"]), pt_j * np.sin(jet["phi"]), pt_j * np.sinh(jet["eta"])
+    lx, ly, lz = lep["pt"] * np.cos(lep["phi"]), lep["pt"] * np.sin(lep["phi"]), lep["pt"] * np.sinh(lep["eta"])
+    own_loc = pick(_col(mu, "jetIdx"), _col(el, "jetIdx"))           # the lepton's jet (local index), NaN / -1: none
+    with np.errstate(invalid="ignore"):
+        has_own = np.isfinite(own_loc) & (own_loc >= 0) & (own_loc < jet.counts)
+    e_own = np.flatnonzero(has_own)
+    g_own = jet.offsets[e_own] + own_loc[e_own].astype(np.int64)
+    if len(g_own):
+        r = 1.0 - _col(jet, "rawFactor")[g_own]                      # raw / corrected pT (no Jet_rawFactor: 1)
+        r = np.where(np.isfinite(r) & (r > 0), r, 1.0)
+        jx[g_own] = (jx[g_own] * r - lx[e_own]) / r
+        jy[g_own] = (jy[g_own] * r - ly[e_own]) / r
+        jz[g_own] = (jz[g_own] * r - lz[e_own]) / r
+    cpt = np.hypot(jx, jy)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ceta = np.where(cpt > 0, np.arcsinh(jz / np.where(cpt > 0, cpt, 1.0)), 0.0)
+        dr_c = delta_r(ceta, np.arctan2(jy, jx), lep["eta"][je], lep["phi"][je])
+        key = np.where((cpt > 15) & (np.abs(ceta) < 2.4) & np.isfinite(dr_c), dr_c, np.inf)
     nearest = np.full(n, -1, dtype=np.int64)
     if len(key):
         o = np.lexsort((key, je))
@@ -510,12 +535,31 @@ def extra_outputs(ev, out, c, wp, lep, is_mu, is_el, imu, iel, ip):
         good = np.isfinite(key[cand])
         nearest[evs[good]] = cand[good]
     out["lep_jet_dr"] = _at(key, nearest)
-    jpt, jeta, jphi = _at(jet["pt"], nearest), _at(jet["eta"], nearest), _at(jet["phi"], nearest)
-    jx, jy, jz = jpt * np.cos(jphi), jpt * np.sin(jphi), jpt * np.sinh(jeta)
-    lx, ly, lz = lep["pt"] * np.cos(lep["phi"]), lep["pt"] * np.sin(lep["phi"]), lep["pt"] * np.sinh(lep["eta"])
-    cx, cy, cz = ly * jz - lz * jy, lz * jx - lx * jz, lx * jy - ly * jx
+    nx, ny, nz = _at(jx, nearest), _at(jy, nearest), _at(jz, nearest)
+    cx, cy, cz = ly * nz - lz * ny, lz * nx - lx * nz, lx * ny - ly * nx
     with np.errstate(invalid="ignore", divide="ignore"):
-        out["lep_jet_ptrel"] = np.sqrt(cx * cx + cy * cy + cz * cz) / np.sqrt(jx * jx + jy * jy + jz * jz)
+        out["lep_jet_ptrel"] = np.sqrt(cx * cx + cy * cy + cz * cz) / np.sqrt(nx * nx + ny * ny + nz * nz)
+
+    # AK4 jets for b-tag event weights (the fixed-WP method needs every jet the b-tag requirement can use, tagged
+    # or not): tight ID, pT > AK4_MIN_PT, |eta| < AK4_MAX_ABS_ETA, the first N_AK4 in NanoAOD (pT) order, with
+    # their dR to the probe and to the lepton so that any b-tag selection can be redone offline; NaN padded
+    p_eta, p_phi = fj.take("eta", ip), fj.take("phi", ip)
+    with np.errstate(invalid="ignore"):
+        a4 = ((jet["pt"] > AK4_MIN_PT) & (np.abs(jet["eta"]) < AK4_MAX_ABS_ETA)
+              & ((jet["jetId"].astype(np.int64) & 2) != 0))
+    ak4 = np.full((n, N_AK4, len(AK4_COLUMNS)), np.nan, dtype=np.float32)
+    g = np.flatnonzero(a4)
+    if len(g):
+        e = je[g]
+        start = np.r_[0, np.flatnonzero(np.diff(e)) + 1]
+        rank = np.arange(len(g)) - np.repeat(start, np.diff(np.r_[start, len(g)]))
+        k = rank < N_AK4
+        g, e, rank = g[k], e[k], rank[k]
+        cols = {"pt": jet["pt"][g], "eta": jet["eta"][g], "phi": jet["phi"][g],
+                "btagDeepFlavB": jet["btagDeepFlavB"][g], "hadronFlavour": _col(jet, "hadronFlavour")[g],
+                "dr_probe": delta_r(jet["eta"][g], jet["phi"][g], p_eta[e], p_phi[e]), "dr_lep": dr_l[g]}
+        ak4[e, rank] = np.stack([np.asarray(cols[c], np.float64) for c in AK4_COLUMNS], axis=1)
+    out["ak4"] = ak4
 
     # probe: ungroomed mass, N3, DeepAK8 top scores, the larger subjet DeepCSV score
     for k, col in (("probe_mass", "mass"), ("probe_n3b1", "n3b1"), ("probe_deepTag_TvsQCD", "deepTag_TvsQCD"),
@@ -652,9 +696,9 @@ def gen_truth(gen, probe_eta, probe_phi, dr=TRUTH_DR):
 
 
 # read when present (NaN otherwise): only the skim cuts on Electron_pfRelIso03_all; the rest are v3 bookkeeping
-OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all", "dxy", "dz", "miniPFRelIso_all"],
-                    "Muon": ["dxy", "dz", "miniPFRelIso_all"],
-                    "Jet": ["hadronFlavour"],
+OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all", "dxy", "dz", "miniPFRelIso_all", "jetIdx"],
+                    "Muon": ["dxy", "dz", "miniPFRelIso_all", "jetIdx"],
+                    "Jet": ["hadronFlavour", "rawFactor"],
                     "FatJet": ["mass", "n3b1", "deepTag_TvsQCD", "deepTagMD_TvsQCD", "subJetIdx1", "subJetIdx2"],
                     "SubJet": ["btagDeepB"],
                     "GenPart": ["statusFlags"]}

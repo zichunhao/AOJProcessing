@@ -1,5 +1,13 @@
 # Brief for the LPC session: MC for top jets (training + semileptonic-ttbar evaluation)
 
+> **Update 2026-10-26 (UAF), read first.** (1) **Only public CMS Open Data**: every file list is on eospublic
+> (the CMS-grid `/store` lists of single-top tW, W+jets and MuEnriched QCD are converted); request the "on demand"
+> files on the record pages first (`python3 ttbar_semilep/samples.py --status`). (2) The CR samples are
+> `ttbar_semilep/samples.py` (adds W/Z(qq)+jets, DY, VV, ttZ, QCD pT-hat 120-300; the e-channel QCD is the inclusive
+> pT-hat QCD, the HT-binned QCD is retired). (3) Rerun every CR sample, MC and data, with the format-3 code
+> (`ttbar_semilep_v3.tar.gz`, the pre-filter on) into `<store>/ttbar_skim_v3/`; the recipe is in
+> `ttbar_semilep/README.md` ("CR samples, outputs and production"). `ttbar_skim/` stays as the format-2 reference.
+
 You are processing CMS Open Data MC for the Aspen Open Jets (AOJ) project (repo `AOJProcessing`, see its
 `CLAUDE.md`). A UAF session did the R&D for a **top-enriched AOJ jet sample from real 2016G+H data, selected with
 semileptonic-ttbar tag-and-probe**. This brief hands over what was decided and what MC is needed. Read it fully

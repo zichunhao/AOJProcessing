@@ -14,7 +14,10 @@
 #                               convention: first 150 constituents in link order, then pt-sorted
 #   ttbar_tag (N,K) float32  -- tag-side / event info, columns in attrs["columns"]
 #   truth (N,K) float32 + gen_weight (N,) float64   -- MC only
+#   ak4 (N,10,7) float32     -- (v3) the event's AK4 jets for b-tag weights, columns in attrs["columns"], NaN padded
 #   cutflow/n, cutflow/w (len(CUTFLOW), 2) -- per channel (mu, el), every input event (w: sum genWeight)
+#   lumis (M,2) int64        -- (v3) the (run, luminosityBlock) of every input lumi section (LuminosityBlocks
+#                               tree; data: certified by -j only), i.e. what the file covers, for the luminosity
 # Root attrs: selection (JSON: era, trigger mode, cuts, store stage), n_entries, sum_genweight
 # (MC: Runs/genEventSumw of the inputs), inputs, versions.
 #
@@ -74,6 +77,21 @@ def runs_genweight(f):
     except Exception as e:
         print("WARNING: cannot read Runs/genEventSumw (%s)" % e)
     return float("nan")
+
+
+def file_lumis(f, lumimask, warn):
+    """(run, luminosityBlock) pairs of the file's LuminosityBlocks tree (every processed lumi section, also those
+    without a stored or even a written event), certified ones only when a golden-JSON mask is given."""
+    if "LuminosityBlocks" not in f:
+        warn("no LuminosityBlocks tree: the lumi sections are not recorded")
+        return set()
+    t = f["LuminosityBlocks"]
+    run = t["run"].array(library="np").astype(np.int64)
+    lumi = t["luminosityBlock"].array(library="np").astype(np.int64)
+    if lumimask is not None:
+        ok = lumimask(run, lumi)
+        run, lumi = run[ok], lumi[ok]
+    return set(zip(run.tolist(), lumi.tolist()))
 
 
 def to_np(x):
@@ -195,7 +213,9 @@ def main(argv=None):
         platform.python_version(), np.__version__, ak.__version__, uproot.__version__, h5py.__version__,
         args.era, args.trigger, args.store))
 
-    blocks = {k: [] for k in ("event_info", "jet_kinematics", "jet_tagging", "PFCands", "ttbar_tag", "truth", "gen_weight")}
+    blocks = {k: [] for k in ("event_info", "jet_kinematics", "jet_tagging", "PFCands", "ttbar_tag", "truth", "gen_weight",
+                              "ak4")}
+    lumis = set()
     cf_n = np.zeros((len(ts.CUTFLOW), len(ts.CHANNELS)))
     cf_w = np.zeros_like(cf_n)
     n_entries, sumw, has_pf, has_truth = 0, 0.0, None, None
@@ -204,6 +224,7 @@ def main(argv=None):
         t = f["Events"]
         if is_mc:
             sumw += runs_genweight(f)
+        lumis |= file_lumis(f, lumimask, warn)
         if t.num_entries == 0:
             print("%s: 0 entries" % path)
             continue
@@ -234,6 +255,7 @@ def main(argv=None):
             blocks["jet_tagging"].append(np.stack([fj[k][gidx] for k in ts.FATJET_TAGGING], axis=1).astype(np.float32))
             blocks["ttbar_tag"].append(np.stack([np.asarray(s[k])[keep]
                                                  .astype(np.float64) for k in TAG_COLUMNS], axis=1).astype(np.float32))
+            blocks["ak4"].append(s["ak4"][keep])
             if rd.pf:
                 blocks["PFCands"].append(pf_rows(ev, gidx))
             if is_mc:
@@ -276,12 +298,23 @@ def main(argv=None):
                           "TRIG_BITS[k] fired (attrs trig_bits); npv_good = PV_npvsGood; pu_ntrueint = Pileup_nTrueInt "
                           "(MC); puppimet_* = PuppiMET; lep_sc_eta = supercluster eta (el) / eta (mu); lep_dxy, lep_dz; "
                           "lep_miniiso = miniPFRelIso_all; lep_jet_dr / lep_jet_ptrel = dR to and pT relative to the "
-                          "nearest AK4 jet with pT > 15, |eta| < 2.4 (2D isolation); n_jet / ht / n_b_all = AK4 jets "
+                          "nearest AK4 jet with pT > 15, |eta| < 2.4 after taking the lepton out of the jet that contains "
+                          "it (Muon/Electron_jetIdx; raw jet - lepton, times the JEC) (2D isolation); n_jet / ht / n_b_all = AK4 jets "
                           "with tight ID, pT > 30, |eta| < 2.4, dR(lepton) > 0.4 (n_b_all: medium DeepJet, no probe "
                           "separation); b_hflav = hadronFlavour of the leading b_* jet (MC); probe_mass = ungroomed "
                           "mass; probe_n3b1; probe_deepTag(MD)_TvsQCD = DeepAK8; probe_sj_btag = max SubJet "
                           "btagDeepB of the probe's two subjets")
         d.attrs["trig_bits"] = ",".join(ts.TRIG_BITS)
+        d = out.create_dataset("ak4", data=cat("ak4", (ts.N_AK4, len(ts.AK4_COLUMNS)), np.float32), compression="gzip")
+        d.attrs["columns"] = ",".join(ts.AK4_COLUMNS)
+        d.attrs["doc"] = ("AK4 jets of the event with tight ID, pT > %g, |eta| < %g: the first %d in pT order, NaN padded; "
+                          "dr_probe / dr_lep = dR to the probe / the tag lepton; hadronFlavour NaN in data. For b-tag "
+                          "event weights and offline b-tag selections" % (ts.AK4_MIN_PT, ts.AK4_MAX_ABS_ETA, ts.N_AK4))
+        lm = np.array(sorted(lumis), dtype=np.int64).reshape(-1, 2)
+        d = out.create_dataset("lumis", data=lm)
+        d.attrs["columns"] = "run,luminosityBlock"
+        d.attrs["doc"] = ("every lumi section of the inputs (LuminosityBlocks tree), %s: the luminosity this file covers"
+                          % ("certified by the golden JSON" if lumimask is not None else "no JSON applied"))
         if is_mc:
             out.create_dataset("gen_weight", data=cat("gen_weight", (), np.float64))
             if has_truth:

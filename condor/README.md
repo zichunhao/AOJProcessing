@@ -83,8 +83,10 @@ one per line) in a file and run `AOJ_MISSING=missing.txt ./run.sh jobs`.
 | `REQUEST_DISK` | `20000000` | KB (~19 GB; holds the staged MINIAOD + NanoAOD) |
 | `AOJ_STORE_XRD` | UCSD ceph | output store (xrootd) |
 | `AOJ_TTBAR` | unset | `also` / `only`: run the ttbar tag-and-probe stage (above) |
-| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v2.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset) |
+| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v3.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset; v2 = 077e0ef, made `ttbar_skim/`) |
 | `AOJ_TTBAR_PRESET` | unset (`an`) | ttbar_maker preset of that stage; a non-default one (e.g. `skim`) writes `<store>/ttbar_<preset>/` and gets its own `SUBMIT_DIR` and log tag |
+| `AOJ_TTBAR_SUBDIR` | `ttbar[_<preset>]` | store directory of that stage (`ttbar` or `ttbar_<name>`, e.g. `ttbar_skim_v3`); its own `SUBMIT_DIR` and log tag |
+| `AOJ_TTBAR_PREFILTER` | `1` with `only`, else `0` | Stage 1 through `ttbar_semilep/pfnano_ttskim.py` (only events with a lepton > 20 GeV and an AK8 jet > 200 GeV are written); never with `also` |
 | `AOJ_SUBMIT_HOLD` | unset | `1`: submit the cluster held |
 | `AOJ_SUBMIT_FORCE` | unset | `1`: let `submit.sh` replace a different `job.sh`/chunk in `SUBMIT_DIR` |
 
@@ -97,8 +99,8 @@ printf "2016G file_lists/2016G.txt 2016G\n2016H file_lists/2016H.txt 2016H\n" > 
 ./run.sh jobs && ./run.sh submit
 # or simply:  ./run.sh scratch
 ```
-MC is auto-detected from the label (`QCD*`/`TT*`/`ST_*`/`WJets*`/`*_mc*`/`MC_*` → MC config, no JSON
-cert; `TT*` also adds the per-jet `top_match` label). For MC, put one line per sample in `regen_lists.txt`, e.g.
+MC is auto-detected from the label (`QCD*`/`TT*`/`ST_*`/`WJets*`/`ZJets*`/`DY*`/`WW`/`WZ`/`ZZ`/`*_mc*`/`MC_*` → MC
+config, no JSON cert; `TT*` also adds the per-jet `top_match` label); every other label is data. For MC, put one line per sample in `regen_lists.txt`, e.g.
 `QCD_Pt300 file_lists/QCD_Pt300.txt QCD_Pt300`, and merge each sample separately:
 `./run.sh merge QCD_Pt300` → `merged_QCD_Pt300.h5` (for ttbar, `python H5_select.py merged_TTToHadronic.h5
 merged_TTToHadronic_topmatched.h5 --top_match 2` then keeps the gen-matched tops). Never merge different MC samples together;
@@ -106,7 +108,7 @@ each one needs its own `xsec × lumi / sumGenWeight` normalization. Merge a samp
 all its jobs have finished. `merge.sh` will not overwrite an existing output (`H5_merge.py`
 truncates it first) unless `AOJ_MERGE_FORCE=1`. `make_jobs.sh` skips an empty file list.
 
-## Optional ttbar tag-and-probe stage (`AOJ_TTBAR`, MC only)
+## Optional ttbar tag-and-probe stage (`AOJ_TTBAR`)
 `job.sh` can also run the semileptonic-ttbar tag-and-probe (`ttbar_semilep/ttbar_maker.py`; see
 `ttbar_semilep/README.md` and `ttbar_semilep/LPC_PROMPT.md`) on the same NanoAOD before it is deleted,
 and push `<store>/ttbar/tt_<chunk>.h5`:
@@ -130,7 +132,14 @@ AOJ_TTBAR=only ./run.sh jobs && ./run.sh submit   # tt_<chunk>.h5 only (no H5_ma
   different `job.sh` or chunk file in a `SUBMIT_DIR` (queued jobs read them when they start) unless
   `AOJ_SUBMIT_FORCE=1`. `AOJ_SUBMIT_HOLD=1` submits a cluster held, to start later with
   `condor_release -name <schedd> <cluster>`.
-- Data labels exit at once: the data route (SingleMuon/SingleElectron) has not been set up.
+- Data (SingleMuon / SingleElectron) runs with `AOJ_TTBAR=only` (`also` exits at once for data): Stage 3 then
+  passes `--sample_type data -j <golden JSON>`. The samples, their channels and file lists are in
+  `ttbar_semilep/samples.py` (`python3 ttbar_semilep/samples.py --regen data > regen_lists.txt`).
+- With `AOJ_TTBAR=only` Stage 1 runs through the pre-filter (`AOJ_TTBAR_PREFILTER`, default on): PFNano runs
+  on every event but writes only those with a lepton and an AK8 jet, looser than any ttbar preset. The
+  outputs are the same as without it (checked on TTToSemiLeptonic: every stored probe and column, the cut
+  flow from `one_probe` on, `Runs/genEventSumw` and the lumi list), except `n_entries` and the cut-flow
+  stages before `one_probe`, which count only the written events.
 - The code is `<store>/cmssw/$TTBAR_TARBALL` (`config.sh`), a small tarball kept apart from the CMSSW
   one. Each job fetches it right after the CMSSW tarball and unpacks it over the tarball's copy of
   `ttbar_semilep/`, so a missing or broken one holds the job before any staging; `gen_submit.sh` refuses
@@ -140,7 +149,7 @@ AOJ_TTBAR=only ./run.sh jobs && ./run.sh submit   # tt_<chunk>.h5 only (no H5_ma
   could not be atomic. To ship new code, commit it, bump the version in `config.sh` (an
   `AOJ_TTBAR_TARBALL` override has to be set for `run.sh jobs` as well), and run `pack_ttbar.sh`.
   `ttbar_semilep_v1.tar.gz` is commit afd845f.
-- It runs `ttbar_maker.py --sample_type MC --era 2016postVFP --trigger lepton_or_jetht --store one_probe`
+- It runs `ttbar_maker.py --sample_type MC|data --era 2016postVFP --trigger lepton_or_jetht --store one_probe`
   through `ttbar_semilep/py3env.sh` (LCG_105a centos7 view inside the EL7 image): about a minute and
   350 MB per job.
 - Normalise with `sum_genweight` (the `Runs` tree), summed over the files actually processed. The

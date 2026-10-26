@@ -72,6 +72,50 @@ got (index in `cutflow.attrs["stages"]`), so the default output holds the substr
 and the final (`tau32`) one, and a looser `--store` can be cut offline. Inputs: AOJ
 Stage-1 PFNano (`pfnano_*_2016UL_OpenData.py` output; has every branch needed) or any UL NanoAOD (no `PFCands`).
 
+## CR samples, outputs (format 3) and production
+
+**Samples** (`samples.py`): the one list for the control region (2016G+H data, UL16 post-VFP MC): group, the
+channels each sample models, Open Data record, cross section used and its source (and the record's own value).
+**Only public CMS Open Data**: every `file_lists/<label>.txt` holds eospublic paths (`--make-lists` writes the
+missing ones from the record's file index). Files marked "on demand" (on tape at CERN: most V+jets, single-top tW,
+MuEnriched QCD, DY and ttZ records) must be requested on the record page before the jobs can read them
+(`python3 ttbar_semilep/samples.py --status`). `--regen GROUP` prints Condor `regen_lists.txt` lines.
+
+| group | samples |
+|---|---|
+| ttbar | TTToSemiLeptonic, TTTo2L2Nu (TTToHadronic is the fine-tuning signal: not in the CR MC, 0.03 % of the region) |
+| single top | tW top / antitop, t-channel top / antitop, s-channel |
+| W(lnu)+jets, DY(ll, m > 50) | HT-binned, 70 ... 2500-inf (8 bins each) |
+| W(qq)+jets, Z(qq)+jets | HT-binned, 200 ... 800-inf (4 bins each) |
+| VV, ttV | WW, WZ, ZZ; ttZ(llnunu) (no UL16 ttW or ttH on the portal) |
+| QCD | mu channel: MuEnriched, pT-hat 120 ... 1000-inf; e channel: inclusive pT-hat 120 ... 3200-inf (half of the CR's QCD is below pT-hat 300). The HT-binned QCD of `ttbar_skim/` is retired |
+| data | SingleMuon (mu), SingleElectron (e), 2016G and 2016H: an event in both is counted once |
+
+**Outputs** (`attrs["format_version"] = 3`; format-2 files are the first 37 `ttbar_tag` / 6 `truth` columns):
+- `ttbar_tag` adds trigger bits, PV and pileup, Puppi MET, lepton SC eta / impact parameters / mini-isolation,
+  2D-isolation inputs, AK4 multiplicity / HT / b tags, and the probe's ungroomed mass, N3, DeepAK8 top scores and
+  subjet b tag (its `doc` attribute). 2D isolation: `lep_jet_dr` / `lep_jet_ptrel` refer to the nearest AK4 jet
+  (pT > 15, |eta| < 2.4) after the lepton is taken out of the jet that contains it (`Muon/Electron_jetIdx`; raw
+  jet minus lepton, times the JEC). Without that the nearest jet is the lepton's own for ~98 % of isolated leptons.
+- `ak4` (N, 10, 7): the event's AK4 jets with tight ID, pT > 20, |eta| < 2.5 (pt, eta, phi, DeepJet, hadron
+  flavour, dR to the probe and to the lepton), for b-tag event weights and offline b-tag selections.
+- `lumis` (M, 2): every processed lumi section (data: certified ones), i.e. the luminosity the file covers.
+- `truth` adds the last-copy top and antitop pT (top-pT reweighting).
+
+**Pre-filter** (`pfnano_ttskim.py`, Condor `AOJ_TTBAR=only`): wraps the Stage-1 PFNano config so that only events
+with a lepton (pT > 20) and an AK8 jet (pT > 200) are written, looser than any preset; `genWeightsTable` stays on
+an unfiltered path, so `Runs/genEventSumw` counts every event. Checked with 2,000 TTToSemiLeptonic events (the
+first input file of `ttbar_skim/` chunk `sub0000`), with and without it: 13 % of the events written, identical
+stored probes and columns, cut flow from `one_probe` on, `Runs/genEventSumw` and lumi list; and the 28 probes are
+bit-identical (PFCands, kinematics, the format-2 columns) to the production `ttbar_skim/` chunk.
+
+**Production** (`condor/README.md`): pack the format-3 code once (`condor/pack_ttbar.sh`, `ttbar_semilep_v3.tar.gz`),
+then per group, MC and data into one directory:
+```bash
+python3 ttbar_semilep/samples.py --regen ttbar single_top > condor/regen_lists.txt     # etc., every CR group
+cd condor && AOJ_TTBAR=only AOJ_TTBAR_PRESET=skim AOJ_TTBAR_SUBDIR=ttbar_skim_v3 ./run.sh jobs && ./run.sh submit
+```
+
 ## R&D results with the default (analysis-note) selection (`rnd/compare_an_vs_veto300.txt`, `rnd/purity_an*.txt`)
 
 Same samples as v1 below (UL16 NanoAODv9 subsets from FNAL; data projected to 2016G+H by event count; MC

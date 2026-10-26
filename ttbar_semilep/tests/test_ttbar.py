@@ -326,6 +326,68 @@ def test_toy_skim_preset():
     assert T["skim"]["el"] == ["HLT_Ele27_WPTight_Gsf", "HLT_Ele32_WPTight_Gsf", "HLT_Ele115_CaloIdVT_GsfTrkIdT"]
 
 
+def test_samples_manifest():
+    """samples.py: every CR sample has a public (eospublic) file list and an MC cross section, each channel's QCD
+    comes from one sample set, data channels follow the primary dataset, and condor/job.sh's data-vs-MC decision
+    (by label) agrees with the manifest."""
+    import re
+    import subprocess
+    import samples as smp
+    seen = {}
+    for label, s in smp.SAMPLES.items():
+        assert s["group"] in smp.GROUPS and set(s["channels"]) <= {1, 2} and s["channels"], label
+        path = smp.file_list(label, AOJ)
+        if s["cr"]:
+            lines = [x.strip() for x in open(path) if x.strip()]
+            assert lines and all(x.startswith(smp.EOSPUBLIC) for x in lines), label
+            assert len(set(lines)) == len(lines), label
+            for c in s["channels"]:
+                seen.setdefault(c, set()).add(s["group"])
+        if s["group"] == "data":
+            assert s["channels"] == ((1,) if label.startswith("SingleMuon") else (2,)), label
+        else:
+            assert s["xsec_pb"] > 0 and s["dataset"].endswith("/MINIAODSIM"), label
+    assert "qcd_mu" in seen[1] and "qcd" not in seen[1] and "qcd" in seen[2] and "qcd_mu" not in seen[2]
+    assert not any(g == "qcd_ht" for c in seen for g in seen[c])
+    case = re.search(r'case "\$DATASET" in\n(.*?)\nesac', open(os.path.join(AOJ, "condor", "job.sh")).read(), re.S).group(1)
+    for label, s in smp.SAMPLES.items():
+        got = subprocess.run(["bash", "-c", 'DATASET="$1"; case "$DATASET" in\n%s\nesac; echo $STYPE' % case, "_", label],
+                             capture_output=True, text=True).stdout.strip()
+        assert got == ("data" if s["group"] == "data" else "MC"), (label, got)
+
+
+def test_toy_2d_isolation_and_ak4():
+    """v3 bookkeeping: the 2D-isolation jet is found after taking the lepton out of its own jet (Muon_jetIdx), and
+    the per-event AK4 array (tight ID, pT > 20, |eta| < 2.5, pT order, NaN padded)."""
+    b = base_mu()
+    own = dict(pt=65., eta=0.5, phi=0.0, btagDeepFlavB=0.1)            # the muon (pt 60) + 5 GeV: its own jet
+    events = [dict(b, Jet=b["Jet"] + [own]),                            # isolated muon: nearest other jet at dR 0.8
+              dict(b, Jet=b["Jet"] + [dict(own, pt=110.)]),             # muon inside a 50 GeV jet: dR ~ 0
+              dict(b, Jet=b["Jet"] + [own]),                            # no jetIdx: the uncleaned jet, dR 0
+              dict(b, Jet=b["Jet"] + [dict(pt=30., eta=2.45, phi=1., jetId=6), dict(pt=25., eta=0., phi=2., jetId=0),
+                                      dict(pt=15., eta=0., phi=2.)])]
+    ev = toy(events)
+    ev["Muon"].cols["jetIdx"] = np.array([2, 2, -1, -1])
+    ev["Jet"].cols["rawFactor"] = np.zeros(len(ev["Jet"].evt))
+    ev["Jet"].cols["hadronFlavour"] = np.where(ev["Jet"]["btagDeepFlavB"] > 0.5, 5, 0)
+    s = ts.select(ev, era="2016postVFP", cuts=ts.merged_cuts(None, "skim"))
+    dr = s["lep_jet_dr"]
+    assert abs(dr[0] - 0.8) < 1e-6 and dr[1] < 1e-6 and dr[2] < 1e-6 and abs(dr[3] - 0.8) < 1e-6, dr
+    lv = 60. * np.array([1., 0., math.sinh(0.5)])                     # lepton vs the 50 GeV jet at dphi 0.8
+    jv = 50. * np.array([math.cos(0.8), math.sin(0.8), math.sinh(0.5)])
+    assert abs(s["lep_jet_ptrel"][0] - np.linalg.norm(np.cross(lv, jv)) / np.linalg.norm(jv)) < 1e-6
+    a = s["ak4"]
+    assert a.shape == (4, ts.N_AK4, len(ts.AK4_COLUMNS))
+    c = dict((k, i) for i, k in enumerate(ts.AK4_COLUMNS))
+    assert a[0, :3, c["pt"]].tolist() == [200., 50., 65.] and np.isnan(a[0, 3:]).all()
+    assert a[3, :3, c["pt"]].tolist() == [200., 50., 30.] and np.isnan(a[3, 3:]).all()   # jetId 0 and pT 15 left out
+    assert a[0, :2, c["hadronFlavour"]].tolist() == [5., 5.] and a[0, 2, c["hadronFlavour"]] == 0.
+    assert abs(a[0, 1, c["dr_lep"]] - 0.8) < 1e-6 and abs(a[0, 0, c["dr_probe"]]) < 1e-6
+    del ev["Muon"].cols["jetIdx"], ev["Jet"].cols["hadronFlavour"]       # inputs without them: no cleaning, NaN flavour
+    s = ts.select(ev, era="2016postVFP", cuts=ts.merged_cuts(None, "skim"))
+    assert s["lep_jet_dr"][0] < 1e-6 and np.isnan(s["ak4"][0, :3, c["hadronFlavour"]]).all()
+
+
 def test_toy_trigger_modes_json_and_eras():
     b = base_mu()
     jet_only = dict(b, hlt=["HLT_PFJet500"])
@@ -483,6 +545,8 @@ def write_toy_nano(path, is_mc):
         f["Events"] = d
         if is_mc:
             f["Runs"] = {"run": np.array([1], np.uint32), "genEventSumw": np.array([123.0])}
+        # lumi 3 has no event (e.g. all filtered out before the output): it is still a processed lumi section
+        f["LuminosityBlocks"] = {"run": np.array([1, 1, 1], np.uint32), "luminosityBlock": np.array([1, 3, 9], np.uint32)}
     return n
 
 
@@ -521,6 +585,11 @@ def test_toy_nanoaod_end_to_end():
             assert abs(pf[0, 0, 3] - e0) < 1e-2 and pf[0, 0, 9] == 211 and abs(pf[0, 0, 10] - 1.) < 1e-6
             pt1 = np.hypot(pf[1, :3, 0], pf[1, :3, 1])
             assert np.allclose(pt1, [9., 7., 5.], atol=1e-4) and not pf[1, 3:].any()
+            # processed lumi sections, certified ones only in data (lumi 9 is not)
+            assert f["lumis"][:].tolist() == ([[1, 1], [1, 3], [1, 9]] if is_mc else [[1, 1], [1, 3]]), f["lumis"][:]
+            ak4 = f["ak4"][:]
+            assert ak4.shape == (len(exp), ts.N_AK4, len(ts.AK4_COLUMNS))
+            assert ak4[0, :2, 0].tolist() == [200., 50.] and np.isnan(ak4[0, 2:]).all()
             cf = f["cutflow/n"][:]
             # all, trigger (event 4 is an electron), filters_json (lumi 9 not certified, data), one_lepton,
             # met (event 1), one_probe, dphi, btag, tau32 (event 2)

@@ -35,7 +35,23 @@ case "${AOJ_TTBAR_PRESET:-}" in
   *) echo "config.sh: AOJ_TTBAR_PRESET='${AOJ_TTBAR_PRESET}' (expected unset, an, an160, paper or skim)" >&2
      return 1 2>/dev/null || exit 1 ;;
 esac
-TTBAR_SUBDIR="ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}"
+# AOJ_TTBAR_SUBDIR: the store directory of that stage (default ttbar/, ttbar_<preset>/), e.g. ttbar_skim_v3 for
+# a rerun with new ttbar code next to the old outputs (make_jobs.sh skips chunks already in that directory).
+TTBAR_SUBDIR="${AOJ_TTBAR_SUBDIR:-ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}}"
+case "$TTBAR_SUBDIR" in
+  ttbar|ttbar_*) ;;
+  *) echo "config.sh: AOJ_TTBAR_SUBDIR='${TTBAR_SUBDIR}' (expected ttbar or ttbar_<name>)" >&2
+     return 1 2>/dev/null || exit 1 ;;
+esac
+# AOJ_TTBAR_PREFILTER: run Stage 1 through ttbar_semilep/pfnano_ttskim.py, which writes only events with a lepton
+# (pT > 20) and an AK8 jet (pT > 200), looser than every ttbar preset. Default on for AOJ_TTBAR=only (no jet-level
+# output); never with AOJ_TTBAR=also, whose jet-level AOJ output needs every event.
+case "${AOJ_TTBAR:-}/${AOJ_TTBAR_PREFILTER:-}" in
+  only/|only/1) TTBAR_PREFILTER=1 ;;
+  only/0|also/|also/0|/|/0) TTBAR_PREFILTER=0 ;;
+  *) echo "config.sh: AOJ_TTBAR_PREFILTER='${AOJ_TTBAR_PREFILTER:-}' with AOJ_TTBAR='${AOJ_TTBAR:-}' (1 needs AOJ_TTBAR=only)" >&2
+     return 1 2>/dev/null || exit 1 ;;
+esac
 
 # ----------------------------------------------------------------------------
 # Canonical AOJ store -- ALWAYS UAF (UCSD T2), matching the HH4b convention
@@ -79,7 +95,7 @@ case "$SITE" in
     # once ("Cannot access initial working directory"). submit.sh submits from
     # here instead, so the job logs land in $SUBMIT_DIR/logs. AOJ_TTBAR clusters
     # get their own directory, so they never touch a jet-level cluster's files.
-    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor${AOJ_TTBAR:+_ttbar}${TTBAR_PRESET:+_$TTBAR_PRESET}}"
+    SUBMIT_DIR="${AOJ_SUBMIT_DIR:-$(readlink -f "$HOME/nobackup")/aoj_condor${AOJ_TTBAR:+_$TTBAR_SUBDIR}}"
     STORE_LOCAL="${AOJ_STORE_LOCAL:-}"        # UCSD store isn't fuse-mounted at LPC
     # Output defaults to the UCSD ceph (STORE_XRD above) even from LPC. To keep
     # output on FNAL EOS instead, uncomment these two lines:
@@ -95,15 +111,16 @@ esac
 
 CMSSW_TARBALL="${CMSSW_VERSION}.tar.gz"
 
-# ---- Optional semileptonic-ttbar stage (MC; job.sh Stage 3) ----
+# ---- Optional semileptonic-ttbar stage (job.sh Stage 3; MC, and data with AOJ_TTBAR=only) ----
 # AOJ_TTBAR: unset = jet-level only (submit.sub unchanged) | also | only.
 # Its code is <STORE>/cmssw/${TTBAR_TARBALL}, uploaded once by pack_ttbar.sh and
 # never replaced: bump the version HERE to ship changed ttbar_semilep/ code (an
 # AOJ_TTBAR_TARBALL override must then be set for run.sh jobs too).
 AOJ_TTBAR="${AOJ_TTBAR:-}"
-TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v2.tar.gz}"   # v1 = afd845f (no "skim" preset)
+TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v3.tar.gz}"   # v1 = afd845f (no "skim" preset); v2 = 077e0ef
+                                                                # (made ttbar_skim/); v3: format_version 3, pre-filter, data
 
 export SITE CMSSW_VERSION SCRAM_ARCH EL7_IMAGE FILES_PER_JOB NTHREADS \
        REQUEST_MEMORY REQUEST_DISK SALVAGE_PARALLEL \
        STORE_XRD STORE_LOCAL CONTAINER_BINDS PROXY CMSSW_TARBALL SUBMIT_DIR \
-       AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR
+       AOJ_TTBAR TTBAR_TARBALL TTBAR_PRESET TTBAR_SUBDIR TTBAR_PREFILTER

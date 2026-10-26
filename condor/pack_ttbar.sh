@@ -31,8 +31,9 @@ remote_size() {
   return 0
 }
 
-# <STORE>/ttbar/ and <STORE>/ttbar_skim/ (idempotent; also when the tarball itself is already there)
-for _sub in ttbar ttbar_skim; do
+# <STORE>/ttbar/, <STORE>/ttbar_skim/ and this configuration's directory (idempotent; also when the tarball
+# itself is already there)
+for _sub in ttbar ttbar_skim "$TTBAR_SUBDIR"; do
   if [ -n "$LOCAL" ]; then
     mkdir -p "$STORE_LOCAL/cmssw" "$STORE_LOCAL/$_sub"
   elif ! timeout 120 xrdfs "$_server" stat "${_dir}/$_sub" > /dev/null 2>&1; then

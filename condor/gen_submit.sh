@@ -9,10 +9,13 @@ source "$HERE/config.sh"
 # so they never write over a jet-level job's logs for the same chunk.
 EXTRA_ENV=""; LOGTAG=""
 if [ -n "${AOJ_TTBAR:-}" ]; then
-  EXTRA_ENV=" AOJ_TTBAR=${AOJ_TTBAR} TTBAR_TARBALL=${TTBAR_TARBALL}"; LOGTAG=".ttbar-${AOJ_TTBAR}"
+  EXTRA_ENV=" AOJ_TTBAR=${AOJ_TTBAR} TTBAR_TARBALL=${TTBAR_TARBALL} TTBAR_SUBDIR=${TTBAR_SUBDIR} TTBAR_PREFILTER=${TTBAR_PREFILTER}"
+  LOGTAG=".ttbar-${AOJ_TTBAR}"
   if [ -n "${TTBAR_PRESET:-}" ]; then
-    EXTRA_ENV="${EXTRA_ENV} TTBAR_PRESET=${TTBAR_PRESET} TTBAR_SUBDIR=${TTBAR_SUBDIR}"; LOGTAG="${LOGTAG}-${TTBAR_PRESET}"
+    EXTRA_ENV="${EXTRA_ENV} TTBAR_PRESET=${TTBAR_PRESET}"; LOGTAG="${LOGTAG}-${TTBAR_PRESET}"
   fi
+  # a non-default store directory also gets its own log names (on UAF the jobs share condor/logs/)
+  [ "$TTBAR_SUBDIR" = "ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}" ] || LOGTAG="${LOGTAG}-${TTBAR_SUBDIR}"
   # the jobs fetch it first thing; refuse to queue them if it is not on the store
   _t="${STORE_XRD#root://}"; _server="root://${_t%%//*}/"; _dir="/${_t#*//}"
   if [ -n "${STORE_LOCAL:-}" ] && [ -d "$STORE_LOCAL/cmssw" ]; then
@@ -20,7 +23,7 @@ if [ -n "${AOJ_TTBAR:-}" ]; then
   else
     timeout 120 xrdfs "$_server" stat "${_dir}/cmssw/${TTBAR_TARBALL}" > /dev/null 2>&1
   fi || { echo "gen_submit: ${STORE_XRD}/cmssw/${TTBAR_TARBALL} not found: run pack_ttbar.sh first" >&2; exit 1; }
-  echo "gen_submit: AOJ_TTBAR=${AOJ_TTBAR}, ttbar code ${TTBAR_TARBALL}${TTBAR_PRESET:+, preset ${TTBAR_PRESET} -> ${TTBAR_SUBDIR}/}"
+  echo "gen_submit: AOJ_TTBAR=${AOJ_TTBAR}, ttbar code ${TTBAR_TARBALL}${TTBAR_PRESET:+, preset ${TTBAR_PRESET}} -> ${TTBAR_SUBDIR}/, pre-filter ${TTBAR_PREFILTER}"
 fi
 if [ -n "${AOJ_MAX_EVENTS:-}" ]; then
   EXTRA_ENV="${EXTRA_ENV} AOJ_MAX_EVENTS=${AOJ_MAX_EVENTS}"
