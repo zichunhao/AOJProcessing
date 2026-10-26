@@ -39,12 +39,12 @@ TTBAR_SUBDIR="ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}"
 
 # ----------------------------------------------------------------------------
 # Canonical AOJ store -- ALWAYS UAF (UCSD T2), matching the HH4b convention
-#   root://redirector.t2.ucsd.edu:1095//store/user/zichun/...
+#   root://redir.t2.ucsd.edu:1095//store/user/zichun/...
 # Outputs (.h5) AND the shipped CMSSW tarball live here, even for jobs that run
 # at LPC (they read the tarball from / write h5 back to UAF over xrootd).
 # Override with AOJ_STORE_XRD if you ever need a different destination.
 # ----------------------------------------------------------------------------
-STORE_XRD="${AOJ_STORE_XRD:-root://redirector.t2.ucsd.edu:1095//store/user/zichun/parcel/AOJ}"
+STORE_XRD="${AOJ_STORE_XRD:-root://redir.t2.ucsd.edu:1095//store/user/zichun/parcel/AOJ}"
 
 # ---- CMSSW release (identical everywhere; base resolves from cvmfs) ----
 CMSSW_VERSION="CMSSW_10_6_30"

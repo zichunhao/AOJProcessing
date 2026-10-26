@@ -19,7 +19,7 @@ skipped, so re-running after evictions/failures only does the missing work.
 
 ## Output location
 Everything lands on the **UCSD ceph** (UAF T2), matching the HH4b convention:
-`root://redirector.t2.ucsd.edu:1095//store/user/zichun/parcel/AOJ`
+`root://redir.t2.ucsd.edu:1095//store/user/zichun/parcel/AOJ`
 (= `~/ceph/parcel/AOJ` = `/ceph/cms/store/user/zichun/parcel/AOJ`)
 ```
 parcel/AOJ/
