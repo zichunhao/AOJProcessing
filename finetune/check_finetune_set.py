@@ -7,9 +7,11 @@
 - counts per split / class / sample, and against summary.json
 - labels: top jets have top_match == 2 and come from TTToHadronic (train/val/test) or TTToSemiLeptonic (test_semilep)
 - splits: no event in two splits (per sample); no train/val event in the tag-and-probe veto list (if one was used)
-- weights: all 1 for --qcd-scarce drop-top; jet_rank / n_jets of every top against merged_<sample>.h5, and of the
-  random QCD jets below against their per-job file
-- kinematics: weighted (pT, |eta|) shape of QCD vs top per split, and sum(w_phys) vs the full-sample yields
+- selection: 20 < mSD < 500, pT < 2500 (summary.json); w_sample: 1 for tops and for val/test QCD, in (0, 1] for
+  the train QCD pool; two epochs drawn with epoch_u01(): sizes and overlap as expected; jets unique per
+  (sample, lumi, event, jet_rank)
+- jet_rank / n_jets of every top against merged_<sample>.h5, and of the random QCD jets below against their file
+- kinematics: per-epoch (w_sample-weighted) QCD vs top in the cells and in coarse pT / mSD bins, and sum(w_phys)
 - PFCands of a few random jets recomputed from the source files
 """
 import argparse
@@ -27,7 +29,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import make_finetune_set as mf  # noqa: E402
 from H5_skim_split import skim_pf  # noqa: E402
 
-SMALL = ["jet_kinematics", "event_info", "gen_info", "label", "sample", "weight", "w_phys"]
+SMALL = ["jet_kinematics", "event_info", "gen_info", "label", "sample", "w_sample", "w_phys"]
 OPT = ["jet_rank", "n_jets"]                     # sets from 20261021 on
 
 
@@ -68,6 +70,29 @@ def source_ranks(store, src):
     return k[o], rank[t][o], nj[t][o]
 
 
+def qcd_source(store, smp, d, row):
+    """Per-job file of row `row` of a split's QCD (d from load()). The maker writes the QCD rows in sorted-file
+    order (Pool.imap), so bisect the sample's files by where the rows of each sit in the split: ~9 event_info reads
+    (~15 s each, tiny chunks) instead of a scan of up to ~500 files."""
+    idx = np.flatnonzero(d["sample"] == mf.SAMPLES.index(smp))
+    k = mf.evkey(d["event_info"][idx])
+    cand = sorted(glob.glob(os.path.join(store, "h5", "out_%s_sub*.h5" % smp)))
+    while cand:
+        mid = len(cand) // 2
+        with h5py.File(cand[mid], "r") as g:
+            e = g["event_info"][:, :3]
+            rows = idx[np.isin(k, mf.evkey(e))]
+        if not len(rows):                            # no row of this file in the split: no direction, drop it
+            cand.pop(mid)
+        elif row < rows[0]:
+            cand = cand[:mid]
+        elif row > rows[-1]:
+            cand = cand[mid + 1:]
+        else:
+            return cand[mid]
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("outdir")
@@ -96,11 +121,19 @@ def main(argv=None):
                 ok &= bool((tm == 2).all()) and set(u) == {mf.SIG_SRC[s]}
             else:
                 ok &= all(x.startswith("QCD") for x in u)
-            if summ.get("qcd_scarce") == "drop-top":
-                ok &= bool((d["weight"] == 1).all())
+            sel = summ["selection"]
+            jk = d["jet_kinematics"]
+            insel = (jk[:, 0] < sel["pt_max"]) & (jk[:, 3] > sel["msd"][0]) & (jk[:, 3] < sel["msd"][1])
+            ws = d["w_sample"]
+            print("      selection passed: %d of %d; w_sample min %.4f max %.4f, sum %.0f" % (
+                insel.sum(), n, ws.min(), ws.max(), ws.astype(np.float64).sum()))
+            ok &= bool(insel.all())
+            ok &= bool((ws > 0).all() and (ws <= 1).all())
+            if c == "top" or s != "train":
+                ok &= bool((ws == 1).all())
             if "jet_rank" in d:
                 r, nj = d["jet_rank"].astype(int), d["n_jets"].astype(int)
-                fr = np.bincount(np.minimum(r, 2), weights=d["weight"], minlength=3) / d["weight"].sum()
+                fr = np.bincount(np.minimum(r, 2), weights=ws, minlength=3) / ws.astype(np.float64).sum()
                 print("      jet_rank leading / 2nd / 3rd+: %s; n_jets 1 / 2 / 3+: %s" % (
                     " / ".join("%.3f" % x for x in fr),
                     " / ".join("%.3f" % x for x in np.bincount(np.minimum(nj, 3), minlength=4)[1:] / len(nj))))
@@ -134,19 +167,35 @@ def main(argv=None):
         bad = int(np.isin(mf.evkey(D[(s, "top")]["event_info"]), veto).sum())
         print("top %s: jets from tag-and-probe events: %d%s" % (s, bad, "" if summ.get("veto") else " (no veto requested)"))
         ok &= bad == 0 or not summ.get("veto")
-    # kinematic match: QCD (weight) vs top, per split, in the make_finetune_set cells and in coarse pT bins
+    # per-epoch redraw of the train QCD pool: unique jet ids, two epochs with the expected size and overlap
+    q = D[("train", "qcd")]
+    ids = np.stack([q["sample"].astype(np.int64), q["event_info"][:, 1], q["event_info"][:, 2],
+                    q["jet_rank"].astype(np.int64)], 1)
+    dup = len(ids) - len(np.unique(ids, axis=0))
+    ws = q["w_sample"].astype(np.float64)
+    k0 = mf.epoch_u01(q["sample"], q["event_info"], q["jet_rank"], 0) < ws
+    k1 = mf.epoch_u01(q["sample"], q["event_info"], q["jet_rank"], 1) < ws
+    n_exp, sd = ws.sum(), np.sqrt((ws * (1 - ws)).sum())
+    both_exp = (ws ** 2).sum()
+    print("train qcd: %d duplicate jet ids; epoch 0 keeps %d, epoch 1 %d (expected %.0f +- %.0f); in both %d "
+          "(expected %.0f); top jets %d" % (dup, k0.sum(), k1.sum(), n_exp, sd, (k0 & k1).sum(), both_exp,
+                                           len(D[("train", "top")]["label"])))
+    ok &= dup == 0 and abs(k0.sum() - n_exp) < 5 * sd + 1 and abs(k1.sum() - n_exp) < 5 * sd + 1
+    ok &= abs((k0 & k1).sum() - both_exp) < 5 * np.sqrt(both_exp) + 1
+    # kinematic match per epoch: QCD (weighted by w_sample) vs top, per split, in the cells and in coarse bins
     for s in mf.SPLITS:
         t, q = D[(s, "top")], D[(s, "qcd")]
-        B = {k: np.array(v) for k, v in summ.get("binning", {}).items()} or mf.BINNINGS["pt_eta"]
+        B = {k: np.array(v) for k, v in summ["binning"].items()}
         nc = mf.ncell(B)
         ht = np.bincount(mf.cell(t["jet_kinematics"], B), minlength=nc).astype(float)
-        hq = np.bincount(mf.cell(q["jet_kinematics"], B), weights=q["weight"], minlength=nc)
+        hq = np.bincount(mf.cell(q["jet_kinematics"], B), weights=q["w_sample"], minlength=nc)
+        nq = hq.sum()
         ht, hq = ht / ht.sum(), hq / hq.sum()
         frac = lambda d, col, edges: np.round(np.histogram(d["jet_kinematics"][:, col], edges,
-                                                           weights=d["weight"])[0] / d["weight"].sum(), 4).tolist()
-        pt_e, m_e = [300, 400, 500, 600, 800, 1000, 14000], [-1e9, 20, 60, 100, 140, 160, 180, 200, 260, 1e9]
-        print("%-5s max cell |diff| %.2e (%d cells); weight > 1: %d QCD jets (max %.2f); QCD/top = %.3f" % (
-            s, np.abs(ht - hq).max(), nc, int((q["weight"] > 1).sum()), q["weight"].max(), q["weight"].sum() / len(t["label"])))
+                                                           weights=d["w_sample"])[0] / d["w_sample"].sum(), 4).tolist()
+        pt_e, m_e = [300, 400, 500, 600, 800, 1000, 2500], [20, 60, 100, 140, 160, 180, 200, 260, 500]
+        print("%-5s max cell |diff| %.2e (%d cells); QCD per epoch / top = %.3f (QCD stored %d)" % (
+            s, np.abs(ht - hq).max(), nc, nq / len(t["label"]), len(q["label"])))
         print("      pT fractions  top %s\n                    qcd %s" % (frac(t, 0, pt_e), frac(q, 0, pt_e)))
         print("      mSD fractions top %s\n                    qcd %s   (mSD edges %s)" % (frac(t, 3, m_e), frac(q, 3, m_e),
                                                                                   m_e[1:-1]))
@@ -163,10 +212,10 @@ def main(argv=None):
                 n = f["label"].shape[0]
                 for r in sorted(rng.choice(n, 3, replace=False)):
                     ev, jk, pf, smp = f["event_info"][r], f["jet_kinematics"][r], f["PFCands"][r], mf.SAMPLES[f["sample"][r]]
-                    src = (os.path.join(a.store, "merged_%s_topmatched.h5" % smp) if c == "top"
-                           else sorted(glob.glob(os.path.join(a.store, "h5", "out_%s_sub*.h5" % smp))))
-                    found = False
-                    for p in ([src] if c == "top" else src):
+                    src = ([os.path.join(a.store, "merged_%s_topmatched.h5" % smp)] if c == "top"
+                           else [p for p in [qcd_source(a.store, smp, D[(s, c)], r)] if p])
+                    found, m = False, []
+                    for p in src:
                         with h5py.File(p, "r") as g:
                             e = g["event_info"][:]
                             m = np.where((e[:, 1] == ev[1]) & (e[:, 2] == ev[2]))[0]
