@@ -35,12 +35,12 @@ case "${AOJ_TTBAR_PRESET:-}" in
   *) echo "config.sh: AOJ_TTBAR_PRESET='${AOJ_TTBAR_PRESET}' (expected unset, an, an160, paper or skim)" >&2
      return 1 2>/dev/null || exit 1 ;;
 esac
-# AOJ_TTBAR_SUBDIR: the store directory of that stage (default ttbar/, ttbar_<preset>/), e.g. ttbar_skim_v3 for
-# a rerun with new ttbar code next to the old outputs (make_jobs.sh skips chunks already in that directory).
+# AOJ_TTBAR_SUBDIR: the store directory of that stage (default ttbar/, ttbar_<preset>/), e.g. sf_samples_<date>_<tag>
+# for the scale-factor samples (make_jobs.sh skips chunks already in that directory).
 TTBAR_SUBDIR="${AOJ_TTBAR_SUBDIR:-ttbar${TTBAR_PRESET:+_$TTBAR_PRESET}}"
 case "$TTBAR_SUBDIR" in
-  ttbar|ttbar_*) ;;
-  *) echo "config.sh: AOJ_TTBAR_SUBDIR='${TTBAR_SUBDIR}' (expected ttbar or ttbar_<name>)" >&2
+  ttbar|ttbar_*|sf_samples_*) ;;
+  *) echo "config.sh: AOJ_TTBAR_SUBDIR='${TTBAR_SUBDIR}' (expected ttbar, ttbar_<name> or sf_samples_<date>_<tag>)" >&2
      return 1 2>/dev/null || exit 1 ;;
 esac
 # AOJ_TTBAR_PREFILTER: run Stage 1 through ttbar_semilep/pfnano_ttskim.py, which writes only events with a lepton

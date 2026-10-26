@@ -110,10 +110,10 @@ stored probes and columns, cut flow from `one_probe` on, `Runs/genEventSumw` and
 bit-identical (PFCands, kinematics, the format-2 columns) to the production `ttbar_skim/` chunk.
 
 **Production** (`condor/README.md`): pack the format-3 code once (`condor/pack_ttbar.sh`, `ttbar_semilep_v3.tar.gz`),
-then per group, MC and data into one directory:
+then per group, MC and data into one directory, named by date and tag (`sf_samples_<date>_<tag>`):
 ```bash
 python3 ttbar_semilep/samples.py --regen ttbar single_top > condor/regen_lists.txt     # etc., every CR group
-cd condor && AOJ_TTBAR=only AOJ_TTBAR_PRESET=skim AOJ_TTBAR_SUBDIR=ttbar_skim_v3 ./run.sh jobs && ./run.sh submit
+cd condor && AOJ_TTBAR=only AOJ_TTBAR_PRESET=skim AOJ_TTBAR_SUBDIR=sf_samples_20261026_skim ./run.sh jobs && ./run.sh submit
 ```
 
 ## R&D results with the default (analysis-note) selection (`rnd/compare_an_vs_veto300.txt`, `rnd/purity_an*.txt`)

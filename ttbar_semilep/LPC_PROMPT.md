@@ -5,7 +5,7 @@
 > files on the record pages first (`python3 ttbar_semilep/samples.py --status`). (2) The CR samples are
 > `ttbar_semilep/samples.py` (adds W/Z(qq)+jets, DY, VV, ttZ, QCD pT-hat 120-300; the e-channel QCD is the inclusive
 > pT-hat QCD, the HT-binned QCD is retired). (3) Rerun every CR sample, MC and data, with the format-3 code
-> (`ttbar_semilep_v3.tar.gz`, the pre-filter on) into `<store>/ttbar_skim_v3/`; the recipe is in
+> (`ttbar_semilep_v3.tar.gz`, the pre-filter on) into `<store>/sf_samples_20261026_skim/` (scale-factor samples are named `sf_samples_<date>_<tag>`); the recipe is in
 > `ttbar_semilep/README.md` ("CR samples, outputs and production"). `ttbar_skim/` stays as the format-2 reference.
 
 You are processing CMS Open Data MC for the Aspen Open Jets (AOJ) project (repo `AOJProcessing`, see its

@@ -3,8 +3,8 @@
 skim, in the input format of the fine-tuning sets, with what is needed to cut tighter offline and to measure the
 tagger scale factor eff(data) / eff(MC) for fully merged tops.
 
-    bash ttbar_semilep/py3env.sh finetune/make_eval_ttbar.py -o OUTDIR --part mc   [--src <store>/ttbar_skim_v3]
-    bash ttbar_semilep/py3env.sh finetune/make_eval_ttbar.py -o OUTDIR --part data [--src <store>/ttbar_skim_v3]
+    bash ttbar_semilep/py3env.sh finetune/make_eval_ttbar.py -o OUTDIR --part mc   [--src <store>/sf_samples_20261026_skim]
+    bash ttbar_semilep/py3env.sh finetune/make_eval_ttbar.py -o OUTDIR --part data [--src <store>/sf_samples_20261026_skim]
 
 Inputs: ttbar_maker.py outputs made with --preset skim --store one_probe (tt_<label>_subNNN.h5) of the CR samples of
 ttbar_semilep/samples.py (cr = True; MC or data by --part). No gen matching and no resampling: a stored probe is kept
@@ -23,16 +23,16 @@ Per probe (OUTDIR/<part>/<part>_NNNN.h5, in source order):
                       signal definition), 0 = any other MC probe, -1 = data
   sample, process     sample code (names in the attribute) and process group (names in attrs process_names)
   w_phys              MC: genWeight x xsec x L / sum_genweight(sample) [events in --lumi]; data: 1
-  cr (N,8) int8       selection flags, columns an, v1, v2, v3, skim, dphi, btag, tau32 (below)
+  cr (N,8) int8       selection flags, columns an, an_anyak8, iso30, iso30_met20, skim, dphi, btag, tau32 (below)
   source (N,2) int32  input file (index into summary_<part>.json "files") and row
-Selections (flags; e.g. v3 & btag = the scale-factor region, v3 & btag & tau32 = the top-enriched one):
+Selections (flags; e.g. iso30_met20 & btag = the scale-factor region, iso30_met20 & btag & tau32 = the top-enriched one):
   an     the HIG-24-010 analysis-note selection ('an' preset): the 'an' lepton (pT > 55, isolated, no other lepton),
          its trigger, MET > 50, exactly one AK8 jet above 300 GeV (equal to the 'an' production, check_eval_ttbar.py)
-  v1     an without the extra-AK8 veto (the probe = the leading AOJ jet away from the lepton)
-  v2     v1 with any isolated tight lepton above 30 GeV ('an' ID + isolation, exactly one veto lepton)
-  v3     v2 with MET > 20 (the proposed evaluation selection)
-  skim   the skim's lepton triggers (non-isolated leptons too, Mu50 / Ele115): v3 is inside it; skim & ~v2 = the
-         QCD-enriched sideband
+  an_anyak8    an without the extra-AK8 veto (the probe = the leading AOJ jet away from the lepton)
+  iso30        an_anyak8 with any isolated tight lepton above 30 GeV ('an' ID + isolation, exactly one veto lepton)
+  iso30_met20  iso30 with MET > 20 (the proposed scale-factor selection)
+  skim         the skim's lepton triggers (non-isolated leptons too, Mu50 / Ele115): iso30_met20 is inside it;
+               skim & ~iso30 = the QCD-enriched sideband
   dphi, btag, tau32   the cut-flow stage reached (cumulative: tau32 implies btag implies dphi)
 """
 import argparse
@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "ttbar_semilep"))
 import make_finetune_set as mf  # noqa: E402
 import samples as smp  # noqa: E402
 
-CR_COLS = ["an", "v1", "v2", "v3", "skim", "dphi", "btag", "tau32"]
+CR_COLS = ["an", "an_anyak8", "iso30", "iso30_met20", "skim", "dphi", "btag", "tau32"]
 LABELS = list(smp.SAMPLES)                       # sample code = index (every manifest label, CR or not)
 AK4_SHAPE = (10, 7)
 TOP_CATEGORY = 3                                 # truth category t (ttbar_selection.TRUTH_CATEGORIES)
@@ -177,7 +177,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-o", "--outdir", required=True)
     ap.add_argument("--part", choices=["mc", "data"], required=True)
-    ap.add_argument("--src", default="/ceph/cms/store/user/zichun/parcel/AOJ/ttbar_skim_v3",
+    ap.add_argument("--src", default="/ceph/cms/store/user/zichun/parcel/AOJ/sf_samples_20261026_skim",
                     help="directory of the ttbar_maker outputs tt_<label>_subNNN.h5")
     ap.add_argument("--lumi", type=float, default=sum(smp.LUMI_FB.values()), help="fb^-1 for w_phys (default 2016G+H)")
     ap.add_argument("--msd-range", type=float, nargs=2, default=[20., 500.], help="mSD window (default 20 500 GeV)")
@@ -258,8 +258,8 @@ def main(argv=None):
                 w.write(out)
                 y = yields.setdefault(l, {})
                 for name, m in (("all", np.ones(len(out["label"]), bool)), ("an_btag", out["cr"][:, 0] & out["cr"][:, 6]),
-                                ("v3_btag", out["cr"][:, 3] & out["cr"][:, 6]),
-                                ("v3_btag_tau32", out["cr"][:, 3] & out["cr"][:, 7])):
+                                ("iso30_met20_btag", out["cr"][:, 3] & out["cr"][:, 6]),
+                                ("iso30_met20_btag_tau32", out["cr"][:, 3] & out["cr"][:, 7])):
                     m = m.astype(bool)
                     c = y.setdefault(name, dict(n=0, w=0.0, n_top=0, w_top=0.0))
                     c["n"] += int(m.sum())
@@ -290,7 +290,7 @@ def main(argv=None):
     summary["seconds"] = time.time() - t0
     with open(os.path.join(a.outdir, "summary_%s.json" % a.part), "w") as fo:
         json.dump(summary, fo, indent=1)
-    tot = dict((k, sum(y.get(k, {}).get("w", 0.0) for y in yields.values())) for k in ("all", "an_btag", "v3_btag", "v3_btag_tau32"))
+    tot = dict((k, sum(y.get(k, {}).get("w", 0.0) for y in yields.values())) for k in ("all", "an_btag", "iso30_met20_btag", "iso30_met20_btag_tau32"))
     print("%d probes in %d shards; weighted: %s" % (w.total, w.idx + 1, ", ".join("%s %.0f" % kv for kv in tot.items())))
     print("done (%.0f s)" % (time.time() - t0))
     return 0

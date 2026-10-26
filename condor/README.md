@@ -85,7 +85,7 @@ one per line) in a file and run `AOJ_MISSING=missing.txt ./run.sh jobs`.
 | `AOJ_TTBAR` | unset | `also` / `only`: run the ttbar tag-and-probe stage (above) |
 | `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v3.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset; v2 = 077e0ef, made `ttbar_skim/`) |
 | `AOJ_TTBAR_PRESET` | unset (`an`) | ttbar_maker preset of that stage; a non-default one (e.g. `skim`) writes `<store>/ttbar_<preset>/` and gets its own `SUBMIT_DIR` and log tag |
-| `AOJ_TTBAR_SUBDIR` | `ttbar[_<preset>]` | store directory of that stage (`ttbar` or `ttbar_<name>`, e.g. `ttbar_skim_v3`); its own `SUBMIT_DIR` and log tag |
+| `AOJ_TTBAR_SUBDIR` | `ttbar[_<preset>]` | store directory of that stage (`ttbar`, `ttbar_<name>` or `sf_samples_<date>_<tag>`, e.g. `sf_samples_20261026_skim`); its own `SUBMIT_DIR` and log tag |
 | `AOJ_TTBAR_PREFILTER` | `1` with `only`, else `0` | Stage 1 through `ttbar_semilep/pfnano_ttskim.py` (only events with a lepton > 20 GeV and an AK8 jet > 200 GeV are written); never with `also` |
 | `AOJ_SUBMIT_HOLD` | unset | `1`: submit the cluster held |
 | `AOJ_SUBMIT_FORCE` | unset | `1`: let `submit.sh` replace a different `job.sh`/chunk in `SUBMIT_DIR` |

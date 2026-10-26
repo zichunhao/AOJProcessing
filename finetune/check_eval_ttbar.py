@@ -158,9 +158,9 @@ def main(argv=None):
               % (an_n, an_files, an_bad))
     flags = D["cr"].astype(bool)
     c = cols["cr"]
-    nest = [("tau32", "btag"), ("btag", "dphi"), ("v3", "skim")]
+    nest = [("tau32", "btag"), ("btag", "dphi"), ("iso30_met20", "skim")]
     check(all(not (flags[:, c.index(x)] & ~flags[:, c.index(y)]).any() for x, y in nest),
-          "flags nest: tau32 => btag => dphi, v3 => skim")
+          "flags nest: tau32 => btag => dphi, iso30_met20 => skim")
     print("ALL OK" if not fails else "%d FAILED" % len(fails))
     return 0 if not fails else 1
 
