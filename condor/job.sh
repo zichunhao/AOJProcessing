@@ -44,6 +44,15 @@ export SCRAM_ARCH
 # Resilience to transient eospublic (CERN Open Data) connection errors at staging.
 export XRD_CONNECTIONRETRY=8 XRD_REQUESTTIMEOUT=600 XRD_STREAMTIMEOUT=120
 WORK="$(pwd)"
+# store_push <local file> <root:// destination>: writes to the store go through the image's own xrdcp
+# (XRootD 5), in a clean environment so that cmsenv's LD_LIBRARY_PATH (CMSSW's XRootD 4.8.5) never loads:
+# CMSSW_10_6_30's xrdcp, first in PATH after cmsenv, cannot write through redir.t2.ucsd.edu ("Prepare: [FATAL]
+# Redirect limit has been reached"); reads work with both clients.
+store_push() {
+  env -i PATH=/usr/bin:/bin HOME="${HOME:-$WORK}" ${X509_USER_PROXY:+X509_USER_PROXY="$X509_USER_PROXY"} \
+      ${X509_CERT_DIR:+X509_CERT_DIR="$X509_CERT_DIR"} XRD_CONNECTIONRETRY=8 XRD_REQUESTTIMEOUT=600 \
+      XRD_STREAMTIMEOUT=120 /usr/bin/xrdcp -f "$1" "$2"
+}
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
 
@@ -152,7 +161,7 @@ fi
 
 # ---- push the small output ----
 echo "===== Push ${OUTNAME} -> ${STORE_XRD}/h5/  ($(date)) ====="
-xrdcp -f "${OUTNAME}" "${STORE_XRD}/h5/${OUTNAME}"
+store_push "${OUTNAME}" "${STORE_XRD}/h5/${OUTNAME}"
 fi
 
 # ---- Stage 3 (optional): semileptonic-ttbar tag-and-probe, see the header ----
@@ -166,7 +175,7 @@ ttbar_stage() {
   bash ttbar_semilep/py3env.sh ttbar_semilep/ttbar_maker.py -i "${NANO}" -o "${tt}" "${typ[@]}" \
        --era 2016postVFP --trigger lepton_or_jetht --store one_probe "${pre[@]}" || return 1
   echo "===== Push ${tt} -> ${STORE_XRD}/${sub}/  ($(date)) ====="
-  xrdcp -f "${tt}" "${STORE_XRD}/${sub}/${tt}" || return 1
+  store_push "${tt}" "${STORE_XRD}/${sub}/${tt}" || return 1
   rm -f "${tt}"
 }
 case "${AOJ_TTBAR:-}" in
