@@ -7,3 +7,6 @@
 # condor batch working dirs (local-tmux step1.sh leftovers + chunked PFNano)
 run_*/
 split_*/
+
+# local notes for coding sessions: not tracked
+CLAUDE.md
