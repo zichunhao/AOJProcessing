@@ -48,10 +48,18 @@ WORK="$(pwd)"
 # (XRootD 5), in a clean environment so that cmsenv's LD_LIBRARY_PATH (CMSSW's XRootD 4.8.5) never loads:
 # CMSSW_10_6_30's xrdcp, first in PATH after cmsenv, cannot write through redir.t2.ucsd.edu ("Prepare: [FATAL]
 # Redirect limit has been reached"); reads work with both clients.
+# Up to 3 tries: the redirector picks a data server afresh for each new xrdcp, so one unreachable server
+# (dtn-06.t2.ucsd.edu, 2026-11-11 onwards) no longer fails the job after hours of processing.
 store_push() {
-  env -i PATH=/usr/bin:/bin HOME="${HOME:-$WORK}" ${X509_USER_PROXY:+X509_USER_PROXY="$X509_USER_PROXY"} \
-      ${X509_CERT_DIR:+X509_CERT_DIR="$X509_CERT_DIR"} XRD_CONNECTIONRETRY=8 XRD_REQUESTTIMEOUT=600 \
-      XRD_STREAMTIMEOUT=120 /usr/bin/xrdcp -f "$1" "$2"
+  local t
+  for t in 1 2 3; do
+    env -i PATH=/usr/bin:/bin HOME="${HOME:-$WORK}" ${X509_USER_PROXY:+X509_USER_PROXY="$X509_USER_PROXY"} \
+        ${X509_CERT_DIR:+X509_CERT_DIR="$X509_CERT_DIR"} XRD_CONNECTIONRETRY=8 XRD_REQUESTTIMEOUT=600 \
+        XRD_STREAMTIMEOUT=120 /usr/bin/xrdcp -f "$1" "$2" && return 0
+    echo "store_push: try $t of 3 failed for $2" >&2
+    [ "$t" -lt 3 ] && sleep 30
+  done
+  return 1
 }
 echo "dataset=$DATASET  chunk=$CHUNK  out=$OUTNAME"
 echo "store=$STORE_XRD  scratch=$WORK  threads=$NTHREADS"
