@@ -117,8 +117,10 @@ CMSSW_TARBALL="${CMSSW_VERSION}.tar.gz"
 # never replaced: bump the version HERE to ship changed ttbar_semilep/ code (an
 # AOJ_TTBAR_TARBALL override must then be set for run.sh jobs too).
 AOJ_TTBAR="${AOJ_TTBAR:-}"
-TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v3.tar.gz}"   # v1 = afd845f (no "skim" preset); v2 = 077e0ef
+TTBAR_TARBALL="${AOJ_TTBAR_TARBALL:-ttbar_semilep_v4.tar.gz}"   # v1 = afd845f (no "skim" preset); v2 = 077e0ef
                                                                 # (made ttbar_skim/); v3: format_version 3, pre-filter, data
+                                                                # (made sf_samples_20261026_skim/); v4: format_version 4,
+                                                                # + L1 pre-firing weights (ttbar_semilep/prefiring/README.md)
 
 export SITE CMSSW_VERSION SCRAM_ARCH EL7_IMAGE FILES_PER_JOB NTHREADS \
        REQUEST_MEMORY REQUEST_DISK SALVAGE_PARALLEL \

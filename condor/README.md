@@ -83,7 +83,7 @@ one per line) in a file and run `AOJ_MISSING=missing.txt ./run.sh jobs`.
 | `REQUEST_DISK` | `20000000` | KB (~19 GB; holds the staged MINIAOD + NanoAOD) |
 | `AOJ_STORE_XRD` | UCSD ceph | output store (xrootd) |
 | `AOJ_TTBAR` | unset | `also` / `only`: run the ttbar tag-and-probe stage (above) |
-| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v3.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset; v2 = 077e0ef, made `ttbar_skim/`) |
+| `AOJ_TTBAR_TARBALL` | `ttbar_semilep_v4.tar.gz` | its code tarball in `<store>/cmssw/` (v1 = no `skim` preset; v2 = 077e0ef, made `ttbar_skim/`; v3 made `sf_samples_20261026_skim/`; v4 adds the L1 pre-firing weights) |
 | `AOJ_TTBAR_PRESET` | unset (`an`) | ttbar_maker preset of that stage; a non-default one (e.g. `skim`) writes `<store>/ttbar_<preset>/` and gets its own `SUBMIT_DIR` and log tag |
 | `AOJ_TTBAR_SUBDIR` | `ttbar[_<preset>]` | store directory of that stage (`ttbar`, `ttbar_<name>` or `sf_samples_<date>_<tag>`, e.g. `sf_samples_20261026_skim`); its own `SUBMIT_DIR` and log tag |
 | `AOJ_TTBAR_PREFILTER` | `1` with `only`, else `0` | Stage 1 through `ttbar_semilep/pfnano_ttskim.py` (only events with a lepton > 20 GeV and an AK8 jet > 200 GeV are written); never with `also` |

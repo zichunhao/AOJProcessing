@@ -10,7 +10,7 @@ Per sample:
 - label = truth category t (MC), -1 (data); data: weights all 1; MC: sum(w_norm) = xsec x L x sum(genWeight of the
   stored rows) / sum_genweight; weight = the product of the nominal columns
 - --rows random rows traced to their input row (PFCands rebuilt, every other dataset equal), with their lepton,
-  pileup and b-tag SFs recomputed here row by row (scalar correctionlib calls, the b-tag weight from btag_eff.json)
+  pileup, b-tag and L1 pre-firing weights recomputed here row by row (scalar correctionlib calls, the b-tag weight from btag_eff.json)
 - flags nest: an => an_anyak8, iso30 => iso30_met20 => skim_iso, tau32 => btag => dphi
 Data: SingleMuon rows are mu, SingleElectron rows e; no (run, lumi, event) twice in a sample or in both primary
 datasets. MC, with --an-dir: for every sample the 'an'-preset production also has, the events flagged an & btag equal its
@@ -79,6 +79,7 @@ def main(argv=None):
         mc = smp.is_mc(label)
         with h5py.File(os.path.join(a.outdir, label + ".h5"), "r") as f:
             files = json.loads(f.attrs["files"])
+            src = str(f.attrs["src"])
             n = f["weight"].shape[0] if "weight" in f else 0
             D = dict((k, f[k][:]) for k in ("event_info", "ttbar_tag", "sel", "weights", "weight", "label", "source")
                      if k in f) if n else {}
@@ -92,7 +93,7 @@ def main(argv=None):
         cnt, gw_sum, flag_bad, an_ok_here = 0, 0.0, 0, True
         want_src = []
         for i, fn in enumerate(files):
-            with h5py.File(os.path.join(S["src"], fn), "r") as g:
+            with h5py.File(os.path.join(src, fn), "r") as g:
                 if g["event_info"].shape[0] == 0:
                     continue
                 c = g["ttbar_tag"].attrs["columns"].split(",")
@@ -167,7 +168,7 @@ def main(argv=None):
         with h5py.File(os.path.join(a.outdir, label + ".h5"), "r") as fo:
             for r in pick:
                 fi, row = D["source"][r]
-                with h5py.File(os.path.join(S["src"], files[fi]), "r") as g:
+                with h5py.File(os.path.join(src, files[fi]), "r") as g:
                     jk = g["jet_kinematics"][row:row + 1]
                     ok = np.array_equal(fo["PFCands"][r:r + 1], mf.skim_pf(g["PFCands"][row:row + 1], jk))
                     for k in ("jet_kinematics", "jet_tagging", "event_info", "ttbar_tag", "ak4") + (("truth",) if mc else ()):
@@ -205,9 +206,12 @@ def main(argv=None):
                         e = eff[[5, 4, 0].index(hf), ip, ie]
                         bw *= sfj if sc_b > ms.BTAG_WP else max(1 - sfj * e, 0.0) / (1 - e)
                     exp["sf_btag"] = bw
+                    if "sf_l1pf" in w:
+                        x = t.get("l1pf_nom", np.nan)
+                        exp["sf_l1pf"] = x if np.isfinite(x) else 1.0
                     sf_good += all(abs(w[k] - v) <= 1e-5 * max(1.0, abs(v)) for k, v in exp.items())
         check(good == len(pick), "%-22s %d of %d random rows equal to their input row (PFCands rebuilt)" % (label, good, len(pick)))
-        check(sf_good == len(pick), "%-22s %d of %d random rows: pileup, lepton, trigger and b-tag SFs recomputed" % (label, sf_good, len(pick)))
+        check(sf_good == len(pick), "%-22s %d of %d random rows: pileup, lepton, trigger, b-tag and pre-firing weights recomputed" % (label, sf_good, len(pick)))
     for era in ("2016G", "2016H"):
         mu, el = ev_pd.get("SingleMuon_" + era), ev_pd.get("SingleElectron_" + era)
         if mu is not None and el is not None:

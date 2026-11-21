@@ -771,6 +771,25 @@ def test_real_mc_truth_semileptonic():
     assert f_hi > f_lo
 
 
+def test_real_mc_prefiring_weights():
+    """v4: the NanoAOD L1PreFiringWeight_* scalars are stored as l1pf_* (finite, in (0, 1]; Up <= Nom <= Dn)."""
+    heavy()
+    need(MC)
+    import uproot
+    t = uproot.open(MC)["Events"]
+    if "L1PreFiringWeight_Nom" not in t.keys():
+        raise Skip("no L1PreFiringWeight in the MC file")
+    n_max = 5000
+    ev, s = read_selection(MC, MC_ERA, n_max)
+    raw = t.arrays(["L1PreFiringWeight_" + v for v in ts.L1PF_VARIANTS], entry_stop=n_max, library="np")
+    for v in ts.L1PF_VARIANTS:
+        x = np.asarray(s["l1pf_" + v.lower()])
+        assert np.array_equal(x, raw["L1PreFiringWeight_" + v].astype(x.dtype)), v
+        assert np.isfinite(x).all() and (x > 0).all() and (x <= 1).all(), v
+    assert (s["l1pf_up"] <= s["l1pf_nom"] + 1e-9).all() and (s["l1pf_dn"] >= s["l1pf_nom"] - 1e-9).all()
+    print("    l1pf_nom: mean %.4f, min %.3f over %d events" % (np.mean(s["l1pf_nom"]), np.min(s["l1pf_nom"]), len(s["l1pf_nom"])))
+
+
 def test_real_pfnano_pfcands_like_h5maker():
     """pf_rows on the AOJ PFNano data file == H5_maker's construction (independent loop) for every AOJ jet."""
     heavy()

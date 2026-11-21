@@ -129,6 +129,9 @@ PRESETS = {
 AN_EL_ID = DEFAULT_CUTS["el_id"]          # the "an" electron ID (lep_id_iso, an_channel)
 LEP_MODES = ("an", "skim")
 
+# NanoAOD L1PreFiringWeight_<variant> (UL2016postVFP: ECAL + muon parts; Up = more prefiring, i.e. a lower
+# weight; stored as l1pf_<variant lower case>)
+L1PF_VARIANTS = ["Nom", "Up", "Dn", "ECAL_Nom", "Muon_Nom"]
 CUTFLOW = ["all", "trigger", "filters_json", "one_lepton", "met", "one_probe", "dphi", "btag", "tau32"]
 CHANNELS = ["mu", "el"]          # channel code = index + 1 (0 = no channel)
 TRIGGER_MODES = ["lepton", "jetht", "lepton_or_jetht", "none"]
@@ -482,6 +485,10 @@ def extra_outputs(ev, out, c, wp, lep, is_mu, is_el, imu, iel, ip):
     out["npv_good"] = _scalar(ev, "PV_npvsGood", n)
     out["pu_ntrueint"] = _scalar(ev, "Pileup_nTrueInt", n)
     out["puppimet_pt"], out["puppimet_phi"] = _scalar(ev, "PuppiMET_pt", n), _scalar(ev, "PuppiMET_phi", n)
+    # v4: L1 pre-firing event weights of the NanoAOD (1 - prefiring probability; it computes them for data too:
+    # apply them to MC only; NaN where the input lacks the branch)
+    for v in L1PF_VARIANTS:
+        out["l1pf_" + v.lower()] = _scalar(ev, "L1PreFiringWeight_" + v, n)
 
     # tag lepton: supercluster eta (el; mu: eta), impact parameters, mini-isolation
     def pick(vm, ve):
@@ -703,7 +710,8 @@ OPTIONAL_COLUMNS = {"Electron": ["pfRelIso03_all", "dxy", "dz", "miniPFRelIso_al
                     "SubJet": ["btagDeepB"],
                     "GenPart": ["statusFlags"]}
 OPTIONAL_COLLECTIONS = ["GenPart", "SubJet"]           # absent collection: warn and go on
-OPTIONAL_SCALARS = ["PV_npvsGood", "Pileup_nTrueInt", "PuppiMET_pt", "PuppiMET_phi"] + TRIG_BITS
+OPTIONAL_SCALARS = (["PV_npvsGood", "Pileup_nTrueInt", "PuppiMET_pt", "PuppiMET_phi"] + TRIG_BITS
+                    + ["L1PreFiringWeight_" + v for v in L1PF_VARIANTS])
 
 
 def branches(era=DEFAULT_ERA, cuts=None, is_mc=False):

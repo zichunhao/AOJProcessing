@@ -4,10 +4,11 @@ probes of the SF samples (one AK8 jet per event), in the input format of the fin
 and per-row weights (normalisation and corrections, nominal and variations).
 
     bash ttbar_semilep/py3env.sh finetune/make_sf_inputs.py -o OUTDIR --lumi-csv pp_2016lumibyls.csv \
-        --el-trig-sf el_trig_sf.json [--src <store>/sf_samples_20261026_skim]
+        --el-trig-sf el_trig_sf.json [--src <store>/sf_samples_20261026_skim] [--data-src DIR]
 
-Inputs: ttbar_maker.py outputs (--preset skim --store one_probe, format 3) of the CR samples of
-ttbar_semilep/samples.py (cr = True; data and MC); --lumi-csv = brilcalc lumi by lumi section of the golden JSON
+Inputs: ttbar_maker.py outputs (--preset skim --store one_probe, format 3 or 4, one format per sample) of the CR
+samples of ttbar_semilep/samples.py (cr = True; data and MC), MC from --src and data from --data-src (default
+--src: e.g. a format-4 MC rerun with the format-3 data); --lumi-csv = brilcalc lumi by lumi section of the golden JSON
 (CERN Open Data record 1059, pp_2016lumibyls.csv); --el-trig-sf = the electron trigger SF of etrig_sf.py (copied to
 OUTDIR).
 Stored probes: in the fine-tuning window (20 < mSD < 500, pT < 2500), in a channel the sample models (samples.py:
@@ -29,7 +30,8 @@ trig_skim = those OR Mu50|TkMu50 / Ele115; lepton = the tag lepton of the skim, 
   iso30_met20  iso30 with MET > 20: the NOMINAL selection
   skim_iso     iso30_met20 with trig_skim instead of trig_an (adds the non-isolated paths)
   dphi, btag, tau32   the cut-flow stage reached (cumulative)
-Weights (MC; data: all 1). weight = w_norm x sf_pu x sf_lep_id x sf_lep_iso x sf_lep_reco x sf_trig x sf_btag.
+Weights (MC; data: all 1). weight = w_norm x sf_pu x sf_lep_id x sf_lep_iso x sf_lep_reco x sf_trig x sf_btag
+x sf_l1pf.
   w_norm       genWeight x xsec_pb x L x 1000 / sum(sum_genweight of every input of the label); L = the recorded
                luminosity of the lumi sections the data inputs cover (--lumi-csv), i.e. what the data saw
   sf_pu        LUM puWeights 2016postVFP_UL Collisions16_UltraLegacy_goldenJSON(pu_ntrueint); _up / _down
@@ -43,6 +45,8 @@ Weights (MC; data: all 1). weight = w_norm x sf_pu x sf_lep_id x sf_lep_iso x sf
                dR(probe) > 1.5, dR(lepton) > 0.5; DeepJet M 0.2489): prod_tagged SF x prod_untagged (1 - SF eff) /
                (1 - eff), SF = BTV deepJet_comb (b, c) / deepJet_incl (light), eff = MC efficiencies of these
                jets in ttbar + single top (btag_eff.json); _bc_up / _bc_down / _light_up / _light_down vary the SFs
+  sf_l1pf      L1 pre-firing weight of the NanoAOD (ttbar_tag l1pf_nom; _up / _down = l1pf_up / l1pf_dn: up = more
+               pre-firing), from format-4 inputs (ttbar_maker v4); 1 for format-3 inputs, which do not have it
   w_toppt      ttbar (TTToSemiLeptonic, TTTo2L2Nu) only, not in `weight`: sqrt(SF(t) SF(tbar)) with the TOP PAG
                data/POWHEG+Pythia8 SF(pT) = exp(0.0615 - 0.0005 pT), pT clamped at 500 GeV; w_toppt_nnlo the
                NNLO/POWHEG+Pythia8 one, 0.103 exp(-0.0118 pT) - 0.000134 pT + 0.973. Not normalised.
@@ -71,8 +75,9 @@ NOMINAL = "iso30_met20"
 W_COLS = ["w_norm", "sf_pu", "sf_pu_up", "sf_pu_down", "sf_lep_id", "sf_lep_id_up", "sf_lep_id_down",
           "sf_lep_iso", "sf_lep_iso_up", "sf_lep_iso_down", "sf_lep_reco", "sf_lep_reco_up", "sf_lep_reco_down",
           "sf_trig", "sf_trig_up", "sf_trig_down", "sf_btag", "sf_btag_bc_up", "sf_btag_bc_down",
-          "sf_btag_light_up", "sf_btag_light_down", "w_toppt", "w_toppt_nnlo"]
-NOMINAL_PRODUCT = ["w_norm", "sf_pu", "sf_lep_id", "sf_lep_iso", "sf_lep_reco", "sf_trig", "sf_btag"]
+          "sf_btag_light_up", "sf_btag_light_down", "sf_l1pf", "sf_l1pf_up", "sf_l1pf_down", "w_toppt", "w_toppt_nnlo"]
+NOMINAL_PRODUCT = ["w_norm", "sf_pu", "sf_lep_id", "sf_lep_iso", "sf_lep_reco", "sf_trig", "sf_btag", "sf_l1pf"]
+L1PF = (("sf_l1pf", "l1pf_nom"), ("sf_l1pf_up", "l1pf_up"), ("sf_l1pf_down", "l1pf_dn"))
 POG = "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/"
 ERA = "2016postVFP"
 CUTS = ts.DEFAULT_CUTS                           # dphi / btag / tau32 are the same in the skim preset
@@ -243,7 +248,7 @@ def read_file(args):
     """The stored probes of one input, converted, with flags and weights."""
     idx, path, label, S, norm, eff, el_trig = args
     mc = smp.is_mc(label)
-    st = dict(rows=0, kept=0, nb_mismatch=0, nb_checked=0)
+    st = dict(rows=0, kept=0, nb_mismatch=0, nb_checked=0, l1pf_rows=0)
     with h5py.File(path, "r") as f:
         n = f["event_info"].shape[0]
         st["rows"] = n
@@ -284,6 +289,10 @@ def read_file(args):
             W["sf_pu" + suf] = C["pu"].evaluate(npu, v)
         W.update(lepton_sfs(dk, el_trig))
         W.update(bw)
+        if "l1pf_nom" in dk:                              # format >= 4
+            for wcol, tcol in L1PF:
+                W[wcol] = np.where(np.isfinite(dk[tcol]), dk[tcol], 1.0)
+            st["l1pf_rows"] = k
         if label in TOPPT_SAMPLES:
             W["w_toppt"], W["w_toppt_nnlo"] = toppt(truth, tcols)
         out["label"] = (truth[:, tcols.index("category")] == me.TOP_CATEGORY).astype(np.int8)
@@ -335,6 +344,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-o", "--outdir", required=True)
     ap.add_argument("--src", default="/ceph/cms/store/user/zichun/parcel/AOJ/sf_samples_20261026_skim")
+    ap.add_argument("--data-src", default=None, help="directory of the data inputs (default: --src)")
     ap.add_argument("--lumi-csv", required=True, help="pp_2016lumibyls.csv (Open Data record 1059)")
     ap.add_argument("--el-trig-sf", default=None, help="electron trigger SF table of etrig_sf.py (none: 1)")
     ap.add_argument("--msd-range", type=float, nargs=2, default=[20., 500.])
@@ -348,19 +358,23 @@ def main(argv=None):
     os.makedirs(a.outdir, exist_ok=True)
     t0 = time.time()
     want = [l for l, s in smp.SAMPLES.items() if s["cr"] and (not a.labels or l in a.labels)]
-    files = dict((l, sorted(glob.glob(os.path.join(a.src, "tt_%s_sub*.h5" % l)))) for l in want)
+    src = dict((l, a.src if smp.is_mc(l) else (a.data_src or a.src)) for l in want)
+    files = dict((l, sorted(glob.glob(os.path.join(src[l], "tt_%s_sub*.h5" % l)))) for l in want)
     missing = [l for l in want if not files[l]]
     if missing:
         sys.exit("no inputs for %s" % ", ".join(missing))
     allf = [p for l in want for p in files[l]]
-    print("%d inputs of %d samples in %s" % (len(allf), len(want), a.src), flush=True)
+    print("%d inputs of %d samples in %s" % (len(allf), len(want), " and ".join(sorted(set(src.values())))), flush=True)
 
     with Pool(a.workers) as pool:
         info = dict((i["path"], i) for i in pool.map(file_info, allf, chunksize=8))
     cuts0 = info[allf[0]]["cuts"]
     for i in info.values():
-        if i["preset"] != "skim" or i["store"] != "one_probe" or i["cuts"] != cuts0 or i["format"] != 3:
-            sys.exit("%s: not format 3, skim preset, one_probe, or other cuts" % i["path"])
+        if i["preset"] != "skim" or i["store"] != "one_probe" or i["cuts"] != cuts0 or i["format"] not in (3, 4):
+            sys.exit("%s: not format 3 or 4, skim preset, one_probe, or other cuts" % i["path"])
+    formats = dict((l, sorted(set(info[p]["format"] for p in files[l]))) for l in want)
+    if any(len(v) > 1 for v in formats.values()):
+        sys.exit("a sample with inputs of several formats: %s" % dict((l, v) for l, v in formats.items() if len(v) > 1))
     lumis = dict((e, set()) for e in me.ERA_RUNS)
     per_pd = {}
     for l in want:
@@ -404,12 +418,13 @@ def main(argv=None):
     if a.el_trig_sf:
         el_trig = json.load(open(a.el_trig_sf))
         json.dump(el_trig, open(os.path.join(a.outdir, "el_trig_sf.json"), "w"), indent=1)
-    summary = dict(src=a.src, selection=S, nominal=NOMINAL, el_trig_sf=bool(el_trig), sel_columns=SEL_COLS, weight_columns=W_COLS,
+    summary = dict(src=a.src, data_src=a.data_src or a.src, selection=S, nominal=NOMINAL, el_trig_sf=bool(el_trig), sel_columns=SEL_COLS, weight_columns=W_COLS,
                    nominal_weight=NOMINAL_PRODUCT, lumi=L, lumi_fb=lumi_fb, skim_cuts=cuts0, samples={})
     for l in want:
         s = smp.SAMPLES[l]
         attrs = dict(doc=__doc__, label=l, group=s["group"], channels=json.dumps(list(s["channels"])),
-                     src=a.src, files=json.dumps([os.path.basename(p) for p in files[l]]), selection=json.dumps(S),
+                     src=src[l], files=json.dumps([os.path.basename(p) for p in files[l]]), selection=json.dumps(S),
+                     input_format=formats[l][0],
                      nominal=NOMINAL, nominal_weight=",".join(NOMINAL_PRODUCT), lumi_fb=lumi_fb,
                      skim_cuts=json.dumps(cuts0), btag_wp=BTAG_WP)
         if smp.is_mc(l):
@@ -420,7 +435,7 @@ def main(argv=None):
             cols["truth"] = info[files[l][0]]["truth"]
         w = LabelWriter(a.outdir, l, 1 << 62, attrs, cols=cols)
         tasks = [(i, p, l, S, norm[l], eff, el_trig) for i, p in enumerate(files[l])]
-        tot = dict(rows=0, kept=0, nb_mismatch=0, nb_checked=0)
+        tot = dict(rows=0, kept=0, nb_mismatch=0, nb_checked=0, l1pf_rows=0)
         with Pool(a.workers) as pool:
             for idx, out, st in pool.imap(read_file, tasks, chunksize=1):
                 for kk in tot:
@@ -433,11 +448,12 @@ def main(argv=None):
             w.f.create_dataset("lumis", data=np.array(sorted(per_pd[l]), np.int64).reshape(-1, 2))
             w.f["lumis"].attrs["columns"] = "run,luminosityBlock"
         w.close()
-        summary["samples"][l] = dict(group=s["group"], files=len(files[l]), **tot)
+        summary["samples"][l] = dict(group=s["group"], src=src[l], input_format=formats[l][0], files=len(files[l]), **tot)
         if smp.is_mc(l):
             summary["samples"][l].update(xsec_pb=s["xsec_pb"], sum_genweight=sumw[l])
-        print("  %-22s %4d inputs, %8d rows -> %7d stored; b-tag jets vs n_b: %d of %d differ (%.0f s)" % (
-            l, len(files[l]), tot["rows"], tot["kept"], tot["nb_mismatch"], tot["nb_checked"], time.time() - t0), flush=True)
+        print("  %-22s %4d inputs, %8d rows -> %7d stored; b-tag jets vs n_b: %d of %d differ; L1 pre-firing weight in %d (%.0f s)" % (
+            l, len(files[l]), tot["rows"], tot["kept"], tot["nb_mismatch"], tot["nb_checked"], tot["l1pf_rows"],
+            time.time() - t0), flush=True)
     summary["seconds"] = time.time() - t0
     json.dump(summary, open(os.path.join(a.outdir, "summary.json"), "w"), indent=1)
     print("done (%.0f s)" % (time.time() - t0))

@@ -53,10 +53,12 @@ TAG_COLUMNS = ["channel", "stage", "lep_pdgId", "lep_pt", "lep_eta", "lep_phi", 
                # appended in v3 (bookkeeping for offline cuts / corrections; NaN where the input lacks the branch)
                "trig_bits", "npv_good", "pu_ntrueint", "puppimet_pt", "puppimet_phi", "lep_sc_eta", "lep_dxy",
                "lep_dz", "lep_miniiso", "lep_jet_dr", "lep_jet_ptrel", "n_jet", "ht", "n_b_all", "b_hflav",
-               "probe_mass", "probe_n3b1", "probe_deepTag_TvsQCD", "probe_deepTagMD_TvsQCD", "probe_sj_btag"]
+               "probe_mass", "probe_n3b1", "probe_deepTag_TvsQCD", "probe_deepTagMD_TvsQCD", "probe_sj_btag",
+               # appended in v4: L1 pre-firing weights of the NanoAOD (apply to MC only)
+               "l1pf_nom", "l1pf_up", "l1pf_dn", "l1pf_ecal_nom", "l1pf_muon_nom"]
 TRUTH_COLUMNS = ["category", "had_top_pt", "had_top_dr", "n_had_W", "n_lep_W", "lep_flav",
                  "gen_top_pt", "gen_antitop_pt"]       # v3: last-copy t / tbar pT
-FORMAT_VERSION = 3                                     # ttbar_tag / truth column set (attrs["format_version"])
+FORMAT_VERSION = 4                                     # ttbar_tag / truth column set (attrs["format_version"])
 
 
 class Warner(object):
